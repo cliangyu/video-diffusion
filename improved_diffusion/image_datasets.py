@@ -1,6 +1,9 @@
 from PIL import Image
 import blobfile as bf
-from mpi4py import MPI
+import os
+NO_MPI = ('NO_MPI' in os.environ)
+if not NO_MPI:
+    from mpi4py import MPI
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -39,8 +42,8 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+        num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
     )
     if deterministic:
         loader = DataLoader(
@@ -57,8 +60,8 @@ def load_data(
 def load_video_data(data_path, batch_size, deterministic=False):
     dataset = TensorVideoDataset(
         data_path,
-        shard=MPI.COMM_WORLD.Get_rank(),
-        num_shards=MPI.COMM_WORLD.Get_size(),
+        shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+        num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
     )
     if deterministic:
         loader = DataLoader(
