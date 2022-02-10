@@ -8,6 +8,7 @@ import torch as th
 import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
+import wandb
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -45,6 +46,7 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
+        sample_interval=np.inf,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -58,6 +60,7 @@ class TrainLoop:
             else [float(x) for x in ema_rate.split(",")]
         )
         self.log_interval = log_interval
+        self.sample_interval = sample_interval
         self.save_interval = save_interval
         self.resume_checkpoint = resume_checkpoint
         self.use_fp16 = use_fp16
@@ -172,6 +175,8 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
+            if self.step % self.sample_interval == 0:
+                self.log_samples()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
@@ -310,6 +315,36 @@ class TrainLoop:
             return make_master_params(params)
         else:
             return params
+
+    def log_samples(self):
+        self.model.eval()
+        logger.log("sampling...")
+        img_size = next(self.data)[0].shape[-1]
+        # copied from scripts/image_sample.py ---------------------------------
+        sample_fn = (
+            self.diffusion.p_sample_loop  # could be generalised
+        )
+        sample = sample_fn(
+            self.model,
+            (self.batch_size, self.model.T, 3, img_size, img_size),
+            clip_denoised=True,  # could be generalised
+            model_kwargs={},
+        )
+        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
+        sample = sample.permute(0, 2, 3, 1)
+        sample = sample.contiguous()
+        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
+        dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
+        images = np.concatenate(
+            [sample.cpu().numpy() for sample in gathered_samples],
+            axis=0
+        )
+        dist.barrier()
+        logger.log("sampling complete")
+        # ---------------------------------------------------------------------
+        images = np.concatenate([images[:, t] for t in range(self.model.T)], axis=4)
+        logger.logkvs({f'sample-{i}': wandb.Image(image) for i, image in enumerate(images)})
+        self.model.train()
 
 
 def parse_resume_step_from_filename(filename):

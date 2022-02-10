@@ -164,7 +164,6 @@ class WandbOutputFormat(KVWriter, SeqWriter):
     def writeseq(self, seq):
         print(*seq)
 
-
 class TensorBoardOutputFormat(KVWriter):
     """
     Dumps key/value pairs into TensorBoard's numeric format.
