@@ -162,7 +162,7 @@ class WandbOutputFormat(KVWriter, SeqWriter):
         pass
 
     def writeseq(self, seq):
-        print(seq)
+        print(*seq)
 
 
 class TensorBoardOutputFormat(KVWriter):
