@@ -1,0 +1,4 @@
+sample
+cifar_train
+cifar_test
+*.pt

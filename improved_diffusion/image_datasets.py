@@ -2,6 +2,7 @@ from PIL import Image
 import blobfile as bf
 from mpi4py import MPI
 import numpy as np
+import torch
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -38,6 +39,24 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
+        shard=MPI.COMM_WORLD.Get_rank(),
+        num_shards=MPI.COMM_WORLD.Get_size(),
+    )
+    if deterministic:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+        )
+    else:
+        loader = DataLoader(
+            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+        )
+    while True:
+        yield from loader
+
+
+def load_video_data(data_path, batch_size, deterministic=False):
+    dataset = TensorVideoDataset(
+        data_path,
         shard=MPI.COMM_WORLD.Get_rank(),
         num_shards=MPI.COMM_WORLD.Get_size(),
     )
@@ -104,3 +123,25 @@ class ImageDataset(Dataset):
         if self.local_classes is not None:
             out_dict["y"] = np.array(self.local_classes[idx], dtype=np.int64)
         return np.transpose(arr, [2, 0, 1]), out_dict
+
+
+class TensorVideoDataset(Dataset):
+
+    def __init__(self, tensor_path, shard=0, num_shards=1):
+        super().__init__()
+        tensor = torch.load(tensor_path)
+        self.local_tensor = self.preprocess(tensor[shard:][::num_shards])
+        self.grayscale = (self.local_tensor.shape[2] == 1)
+
+    def preprocess(self, tensor):
+        # renormalise from [0, 1] top [-1, 1]
+        return 2*tensor - 1
+
+    def __len__(self):
+        return len(self.local_tensor)
+
+    def __getitem__(self, idx):
+        vid = self.local_tensor[idx]
+        if self.grayscale:
+            vid = vid.expand(-1, 3, -1, -1)  # network is designed for RGB
+        return vid, {}

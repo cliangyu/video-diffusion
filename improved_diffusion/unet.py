@@ -523,6 +523,20 @@ class UNetModel(nn.Module):
         return result
 
 
+class UNetVideoModel(UNetModel):
+
+    def __init__(self, T, *args, **kwargs):
+        self.T = T
+        super().__init__(*args, **kwargs)
+
+    def forward(self, x, timesteps):
+        B, T, C, H, W = x.shape
+        assert T == self.T
+        x = x.view(B*T, C, H, W)
+        timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
+        return super().forward(x, timesteps).view(B, T, C, H, W)
+
+
 class SuperResModel(UNetModel):
     """
     A UNetModel that performs super-resolution.
