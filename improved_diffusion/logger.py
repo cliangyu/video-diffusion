@@ -14,6 +14,7 @@ import tempfile
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
+import wandb
 
 DEBUG = 10
 INFO = 20
@@ -155,7 +156,7 @@ class WandbOutputFormat(KVWriter):
         wandb.init(entity=os.environ['WANDB_ENTITY'], project='video-diffusion')
 
     def writekvs(self, kvs):
-        wandb.log(**kvs)
+        wandb.log(kvs)
 
     def close(self):
         pass
