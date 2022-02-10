@@ -147,6 +147,20 @@ class CSVOutputFormat(KVWriter):
         self.file.close()
 
 
+class WandbOutputFormat(KVWriter):
+    """
+    Logs key/value pairs to wandb.
+    """
+    def __init__(self):  # TODO resuming training, logging config
+        wandb.init(entity=os.environ['WANDB_ENTITY'], project='video-diffusion')
+
+    def writekvs(self, kvs):
+        wandb.log(**kvs)
+
+    def close(self):
+        pass
+
+
 class TensorBoardOutputFormat(KVWriter):
     """
     Dumps key/value pairs into TensorBoard's numeric format.
@@ -198,6 +212,8 @@ def make_output_format(format, ev_dir, log_suffix=""):
         return JSONOutputFormat(osp.join(ev_dir, "progress%s.json" % log_suffix))
     elif format == "csv":
         return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
+    elif format == "wandb":
+        return WandbOutputFormat()
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     else:
