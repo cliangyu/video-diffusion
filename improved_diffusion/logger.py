@@ -485,7 +485,7 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
 
     Logger.CURRENT = Logger(dir=dir, output_formats=output_formats, comm=comm)
     if output_formats:
-        log("Rank {rank}. Logging to %s" % dir)
+        log(f"Rank {rank}.", "Logging to %s" % dir)
 
 
 def _configure_default_logger():
