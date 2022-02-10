@@ -148,7 +148,7 @@ class CSVOutputFormat(KVWriter):
         self.file.close()
 
 
-class WandbOutputFormat(KVWriter):
+class WandbOutputFormat(KVWriter, SeqWriter):
     """
     Logs key/value pairs to wandb.
     """
@@ -160,6 +160,9 @@ class WandbOutputFormat(KVWriter):
 
     def close(self):
         pass
+
+    def writeseq(self, seq):
+        print(seq)
 
 
 class TensorBoardOutputFormat(KVWriter):
