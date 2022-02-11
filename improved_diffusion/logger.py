@@ -152,8 +152,10 @@ class WandbOutputFormat(KVWriter, SeqWriter):
     """
     Logs key/value pairs to wandb.
     """
-    def __init__(self):  # TODO resuming training, logging config
-        wandb.init(entity='universal-conditional-ddpm', project='video-diffusion')
+    def __init__(self, config):  # TODO resuming training, logging config
+        wandb.init(entity='universal-conditional-ddpm',
+                   project='video-diffusion',
+                   config=config)
 
     def writekvs(self, kvs):
         wandb.log(kvs)
@@ -205,7 +207,7 @@ class TensorBoardOutputFormat(KVWriter):
             self.writer = None
 
 
-def make_output_format(format, ev_dir, log_suffix=""):
+def make_output_format(format, ev_dir, log_suffix="", config=None):
     os.makedirs(ev_dir, exist_ok=True)
     if format == "stdout":
         return HumanOutputFormat(sys.stdout)
@@ -216,7 +218,7 @@ def make_output_format(format, ev_dir, log_suffix=""):
     elif format == "csv":
         return CSVOutputFormat(osp.join(ev_dir, "progress%s.csv" % log_suffix))
     elif format == "wandb":
-        return WandbOutputFormat()
+        return WandbOutputFormat(config=config)
     elif format == "tensorboard":
         return TensorBoardOutputFormat(osp.join(ev_dir, "tb%s" % log_suffix))
     else:
@@ -458,7 +460,7 @@ def mpi_weighted_mean(comm, local_name2valcount):
         return {}
 
 
-def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
+def configure(dir=None, format_strs=None, comm=None, log_suffix="", config=None):
     """
     If comm is provided, average all numerical stats across that comm
     """
@@ -484,7 +486,7 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
         else:
             format_strs = os.getenv("OPENAI_LOG_FORMAT_MPI", "log").split(",")
     format_strs = filter(None, format_strs)
-    output_formats = [make_output_format(f, dir, log_suffix) for f in format_strs]
+    output_formats = [make_output_format(f, dir, log_suffix, config=config) for f in format_strs]
 
     Logger.CURRENT = Logger(dir=dir, output_formats=output_formats, comm=comm)
     if output_formats:

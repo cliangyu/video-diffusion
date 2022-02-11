@@ -20,7 +20,7 @@ def main():
     args = create_argparser().parse_args()
 
     dist_util.setup_dist()
-    logger.configure()
+    logger.configure(config=args)
 
     logger.log("creating video model and diffusion...")
     model, diffusion = create_video_model_and_diffusion(
