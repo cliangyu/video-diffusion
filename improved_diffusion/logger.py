@@ -153,7 +153,7 @@ class WandbOutputFormat(KVWriter, SeqWriter):
     Logs key/value pairs to wandb.
     """
     def __init__(self):  # TODO resuming training, logging config
-        wandb.init(entity=os.environ['WANDB_ENTITY'], project='video-diffusion')
+        wandb.init(entity='universal-conditional-ddpm', project='video-diffusion')
 
     def writekvs(self, kvs):
         wandb.log(kvs)
@@ -463,10 +463,11 @@ def configure(dir=None, format_strs=None, comm=None, log_suffix=""):
     If comm is provided, average all numerical stats across that comm
     """
     if dir is None:
-        dir = os.getenv("OPENAI_LOGDIR")
-    if dir is None:
+        parent = os.getenv("OPENAI_LOGDIR")
+        if parent is None:
+            parent = tempfile.gettempdir()
         dir = osp.join(
-            tempfile.gettempdir(),
+            parent,
             datetime.datetime.now().strftime("openai-%Y-%m-%d-%H-%M-%S-%f"),
         )
     assert isinstance(dir, str)

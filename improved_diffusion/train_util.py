@@ -46,7 +46,7 @@ class TrainLoop:
         schedule_sampler=None,
         weight_decay=0.0,
         lr_anneal_steps=0,
-        sample_interval=np.inf,
+        sample_interval=None,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -175,7 +175,7 @@ class TrainLoop:
                 # Run for a finite amount of time in integration tests.
                 if os.environ.get("DIFFUSION_TRAINING_TEST", "") and self.step > 0:
                     return
-            if self.step % self.sample_interval == 0:
+            if self.sample_interval is not None and self.step != 0 and self.step % self.sample_interval == 0:
                 self.log_samples()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
@@ -318,6 +318,7 @@ class TrainLoop:
 
     def log_samples(self):
         self.model.eval()
+        print("printing sampling...")
         logger.log("sampling...")
         img_size = next(self.data)[0].shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
@@ -331,7 +332,7 @@ class TrainLoop:
             model_kwargs={},
         )
         sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        sample = sample.permute(0, 2, 3, 1)
+        sample = sample.permute(0, 1, 3, 4, 2)
         sample = sample.contiguous()
         gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
         dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
@@ -342,7 +343,7 @@ class TrainLoop:
         dist.barrier()
         logger.log("sampling complete")
         # ---------------------------------------------------------------------
-        images = np.concatenate([images[:, t] for t in range(self.model.T)], axis=4)
+        images = np.concatenate([images[:, t] for t in range(self.model.T)], axis=2)
         logger.logkvs({f'sample-{i}': wandb.Image(image) for i, image in enumerate(images)})
         self.model.train()
 
