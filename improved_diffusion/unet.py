@@ -16,6 +16,7 @@ from .nn import (
     zero_module,
     normalization,
     timestep_embedding,
+    frame_embedding,
     checkpoint,
 )
 
@@ -205,7 +206,7 @@ class AttentionBlock(nn.Module):
     https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
     """
 
-    def __init__(self, channels, num_heads=1, use_checkpoint=False):
+    def __init__(self, channels, num_heads=1, use_checkpoint=False, T=1):
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads
@@ -215,9 +216,13 @@ class AttentionBlock(nn.Module):
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         self.attention = QKVAttention()
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+        self.T = 1
 
     def forward(self, x):
-        return checkpoint(self._forward, (x,), self.parameters(), self.use_checkpoint)
+        BT, C, *spatial = x.shape
+        x = x.view(BT//self.T, self.T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
+        out = checkpoint(self._forward, (x,), self.parameters(), self.use_checkpoint)
+        return out.transpose(1, 2).view(BT, C, *spatial)
 
     def _forward(self, x):
         b, c, *spatial = x.shape
@@ -314,6 +319,9 @@ class UNetModel(nn.Module):
         num_heads=1,
         num_heads_upsample=-1,
         use_scale_shift_norm=False,
+        use_spatial_encoding=False,
+        T=1,
+        image_size=None,
     ):
         super().__init__()
 
@@ -343,6 +351,7 @@ class UNetModel(nn.Module):
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
 
+        self.n_blocks_before_attn = None
         self.input_blocks = nn.ModuleList(
             [
                 TimestepEmbedSequential(
@@ -355,6 +364,10 @@ class UNetModel(nn.Module):
         ds = 1
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
+                if ds in attention_resolutions and self.n_blocks_before_attn is None:
+                    self.n_blocks_before_attn = len(self.input_blocks)
+                    first_attn_ds = ds
+                    first_attn_ch = ch
                 layers = [
                     ResBlock(
                         ch,
@@ -370,7 +383,7 @@ class UNetModel(nn.Module):
                 if ds in attention_resolutions:
                     layers.append(
                         AttentionBlock(
-                            ch, use_checkpoint=use_checkpoint, num_heads=num_heads
+                            ch, use_checkpoint=use_checkpoint, num_heads=num_heads, T=T,
                         )
                     )
                 self.input_blocks.append(TimestepEmbedSequential(*layers))
@@ -382,6 +395,20 @@ class UNetModel(nn.Module):
                 input_block_chans.append(ch)
                 ds *= 2
 
+        if self.n_blocks_before_attn is None:
+            self.n_blocks_before_attn = len(self.input_blocks)
+            first_attn_ds = ds
+            first_attn_ch = ch
+
+        if use_spatial_encoding:
+            first_attn_res = image_size // first_attn_ds
+            self.spatial_encoding = nn.Parameter(
+                th.randn(1, first_attn_ch, first_attn_res, first_attn_res),
+                requires_grad=True
+            )
+        else:
+            self.spatial_encoding = None
+
         self.middle_block = TimestepEmbedSequential(
             ResBlock(
                 ch,
@@ -391,7 +418,7 @@ class UNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            AttentionBlock(ch, use_checkpoint=use_checkpoint, num_heads=num_heads),
+            AttentionBlock(ch, use_checkpoint=use_checkpoint, num_heads=num_heads, T=T),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -423,6 +450,7 @@ class UNetModel(nn.Module):
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
+                            T=T,
                         )
                     )
                 if level and i == num_res_blocks:
@@ -459,7 +487,7 @@ class UNetModel(nn.Module):
         """
         return next(self.input_blocks.parameters()).dtype
 
-    def forward(self, x, timesteps, y=None):
+    def forward(self, x, timesteps, y=None, **pos_enc_kwargs):
         """
         Apply the model to an input batch.
 
@@ -480,15 +508,22 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.inner_dtype)
-        for module in self.input_blocks:
+        for layer, module in enumerate(self.input_blocks):   # add frame embedding after first input block
             h = module(h, emb)
             hs.append(h)
+            if layer + 1 == self.n_blocks_before_attn:
+                h = self.add_positional_encodings(h, **pos_enc_kwargs)
         h = self.middle_block(h, emb)
         for module in self.output_blocks:
             cat_in = th.cat([h, hs.pop()], dim=1)
             h = module(cat_in, emb)
         h = h.type(x.dtype)
         return self.out(h)
+
+    def add_positional_encodings(self, h):
+        if self.spatial_encoding is not None:
+            h = h + self.spatial_encoding
+        return h
 
     def get_feature_vectors(self, x, timesteps, y=None):
         """
@@ -527,14 +562,26 @@ class UNetVideoModel(UNetModel):
 
     def __init__(self, T, *args, **kwargs):
         self.T = T
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs, T=T)
 
-    def forward(self, x, timesteps):
+    def forward(self, x, timesteps, frame_indices=None):
         B, T, C, H, W = x.shape
+        if frame_indices is None:
+            frame_indices = th.arange(0, T, device=x.device).view(1, T).expand(B, T)
         assert T == self.T
         x = x.view(B*T, C, H, W)
         timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
-        return super().forward(x, timesteps).view(B, T, C, H, W)
+        return super().forward(
+            x, timesteps, frame_indices=frame_indices
+        ).view(B, T, C, H, W)
+
+    def add_positional_encodings(self, h, frame_indices):
+        h = super().add_positional_encodings(h)
+        B, T = frame_indices.shape
+        BT, C, H, W = h.shape
+        assert BT == B*T
+        emb = frame_embedding(frame_indices, C, max_period=self.T*10)
+        return h + emb.view(BT, C, 1, 1)
 
 
 class SuperResModel(UNetModel):
@@ -558,4 +605,3 @@ class SuperResModel(UNetModel):
         upsampled = F.interpolate(low_res, (new_height, new_width), mode="bilinear")
         x = th.cat([x, upsampled], dim=1)
         return super().get_feature_vectors(x, timesteps, **kwargs)
-

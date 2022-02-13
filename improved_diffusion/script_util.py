@@ -32,12 +32,14 @@ def model_and_diffusion_defaults():
         rescale_learned_sigmas=True,
         use_checkpoint=False,
         use_scale_shift_norm=True,
+        use_spatial_encoding=False,
     )
 
 
 def video_model_and_diffusion_defaults():
     defaults = model_and_diffusion_defaults()
     defaults['T'] = 100
+    defaults['use_spatial_encoding'] = True
     return defaults
 
 
@@ -61,6 +63,7 @@ def create_model_and_diffusion(
     rescale_learned_sigmas,
     use_checkpoint,
     use_scale_shift_norm,
+    use_spatial_encoding,
 ):
     model = create_model(
         image_size,
@@ -74,6 +77,7 @@ def create_model_and_diffusion(
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
         dropout=dropout,
+        use_spatial_encoding=use_spatial_encoding,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -110,6 +114,7 @@ def create_video_model_and_diffusion(
     rescale_learned_sigmas,
     use_checkpoint,
     use_scale_shift_norm,
+    use_spatial_encoding,
 ):
     model = create_video_model(
         T,
@@ -124,6 +129,7 @@ def create_video_model_and_diffusion(
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
         dropout=dropout,
+        use_spatial_encoding=use_spatial_encoding,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -151,6 +157,7 @@ def create_model(
     num_heads_upsample,
     use_scale_shift_norm,
     dropout,
+    use_spatial_encoding,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -178,6 +185,8 @@ def create_model(
         num_heads=num_heads,
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
+        use_spatial_encoding=use_spatial_encoding,
+        image_size=image_size,
     )
 
 
@@ -194,6 +203,7 @@ def create_video_model(
     num_heads_upsample,
     use_scale_shift_norm,
     dropout,
+    use_spatial_encoding,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -222,6 +232,8 @@ def create_video_model(
         num_heads=num_heads,
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
+        use_spatial_encoding=use_spatial_encoding,
+        image_size=image_size,
     )
 
 

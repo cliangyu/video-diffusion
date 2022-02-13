@@ -318,7 +318,6 @@ class TrainLoop:
 
     def log_samples(self):
         self.model.eval()
-        print("printing sampling...")
         logger.log("sampling...")
         img_size = next(self.data)[0].shape[-1]
         # copied from scripts/image_sample.py ---------------------------------

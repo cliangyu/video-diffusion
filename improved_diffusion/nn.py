@@ -121,6 +121,21 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     return embedding
 
 
+def frame_embedding(frame_indices, dim, max_period):  # max_period should be several times T
+    """
+    Create embeddings for frame number.
+
+    :param frame_indices: a 1-D Tensor of N indices, one per batch element.
+    :param dim:
+    :param max_period: Should be several times T.
+    :return: an [N x dim] Tensor of positional embeddings.
+    """
+    orig_shape = frame_indices.shape
+    return timestep_embedding(
+        frame_indices.reshape(-1), dim=dim, max_period=max_period
+    ).view(*orig_shape, dim)
+
+
 def checkpoint(func, inputs, params, flag):
     """
     Evaluate a function without caching intermediate activations, allowing for
