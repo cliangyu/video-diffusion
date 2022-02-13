@@ -560,9 +560,17 @@ class UNetModel(nn.Module):
 
 class UNetVideoModel(UNetModel):
 
-    def __init__(self, T, *args, **kwargs):
+    def __init__(self, T,
+                 use_frame_encoding,
+                 cross_frame_attention,
+                 *args, **kwargs,
+                 ):
         self.T = T
-        super().__init__(*args, **kwargs, T=T)
+        self.use_frame_encoding = use_frame_encoding
+        super().__init__(
+            *args, **kwargs,
+            T=T if cross_frame_attention else 1
+        )
 
     def forward(self, x, timesteps, frame_indices=None):
         B, T, C, H, W = x.shape
@@ -577,6 +585,8 @@ class UNetVideoModel(UNetModel):
 
     def add_positional_encodings(self, h, frame_indices):
         h = super().add_positional_encodings(h)
+        if not self.use_frame_encoding:
+            return h
         B, T = frame_indices.shape
         BT, C, H, W = h.shape
         assert BT == B*T

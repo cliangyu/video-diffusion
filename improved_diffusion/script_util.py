@@ -40,6 +40,8 @@ def video_model_and_diffusion_defaults():
     defaults = model_and_diffusion_defaults()
     defaults['T'] = 100
     defaults['use_spatial_encoding'] = True
+    defaults['use_frame_encoding'] = True
+    defaults['cross_frame_attention'] = True
     return defaults
 
 
@@ -115,6 +117,8 @@ def create_video_model_and_diffusion(
     use_checkpoint,
     use_scale_shift_norm,
     use_spatial_encoding,
+    use_frame_encoding,
+    cross_frame_attention,
 ):
     model = create_video_model(
         T,
@@ -130,6 +134,8 @@ def create_video_model_and_diffusion(
         use_scale_shift_norm=use_scale_shift_norm,
         dropout=dropout,
         use_spatial_encoding=use_spatial_encoding,
+        use_frame_encoding=use_frame_encoding,
+        cross_frame_attention=cross_frame_attention,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -204,6 +210,8 @@ def create_video_model(
     use_scale_shift_norm,
     dropout,
     use_spatial_encoding,
+    use_frame_encoding,
+    cross_frame_attention,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -233,6 +241,8 @@ def create_video_model(
         num_heads_upsample=num_heads_upsample,
         use_scale_shift_norm=use_scale_shift_norm,
         use_spatial_encoding=use_spatial_encoding,
+        use_frame_encoding=use_frame_encoding,
+        cross_frame_attention=cross_frame_attention,
         image_size=image_size,
     )
 
