@@ -178,6 +178,8 @@ class TrainLoop:
             if self.sample_interval is not None and self.step != 0 and self.step % self.sample_interval == 0:
                 self.log_samples()
             self.step += 1
+            if self.step == 1:
+                gather_and_log_videos('data', batch)
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()
@@ -330,21 +332,34 @@ class TrainLoop:
             clip_denoised=True,  # could be generalised
             model_kwargs={},
         )
-        sample = ((sample + 1) * 127.5).clamp(0, 255).to(th.uint8)
-        sample = sample.permute(0, 1, 3, 4, 2)
-        sample = sample.contiguous()
-        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
-        dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
-        images = np.concatenate(
-            [sample.cpu().numpy() for sample in gathered_samples],
-            axis=0
-        )
         dist.barrier()
-        logger.log("sampling complete")
         # ---------------------------------------------------------------------
-        images = np.concatenate([images[:, t] for t in range(self.model.T)], axis=2)
-        logger.logkvs({f'sample-{i}': wandb.Image(image) for i, image in enumerate(images)})
+        logger.log("sampling complete")
+        gather_and_log_videos('sample', sample)
         self.model.train()
+
+def gather_and_log_videos(name, array):
+    """
+    Unnormalises and logs videos given as B x T x C x H x W tensors.
+    """
+    array = array.cuda()
+    array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
+    array = array.permute(0, 1, 3, 4, 2)
+    array = array.contiguous()
+    gathered_arrays = [th.zeros_like(array) for _ in range(dist.get_world_size())]
+    dist.all_gather(gathered_arrays, array)  # gather not supported with NCCL
+    images = np.concatenate(
+        [array.cpu().numpy() for array in gathered_arrays],
+        axis=0
+    )
+    divider = images[:, 0, :, :1]*0 + 127
+    T = array.shape[1]
+    images = np.concatenate(
+        [np.concatenate([images[:, t], divider], axis=2) for t in range(T)],
+        axis=2
+    )
+    dist.barrier()
+    logger.logkvs({f'{name}-{i}': wandb.Image(image) for i, image in enumerate(images)})
 
 
 def parse_resume_step_from_filename(filename):

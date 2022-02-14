@@ -216,13 +216,13 @@ class AttentionBlock(nn.Module):
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         self.attention = QKVAttention()
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
-        self.T = 1
+        self.T = T
 
     def forward(self, x):
         BT, C, *spatial = x.shape
         x = x.view(BT//self.T, self.T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
         out = checkpoint(self._forward, (x,), self.parameters(), self.use_checkpoint)
-        return out.transpose(1, 2).view(BT, C, *spatial)
+        return out.transpose(1, 2).reshape(BT, C, *spatial)
 
     def _forward(self, x):
         b, c, *spatial = x.shape
