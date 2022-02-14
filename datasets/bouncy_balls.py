@@ -136,14 +136,12 @@ def bounce_vec(res, n=2, T=128, r =None, m =None):
 
 if __name__ == "__main__":
     res=32
-    T=10
+    T=2
     N = 5000
     dat = []
     for i in range(N):
         dat.append(torch.tensor(bounce_vec(res=res, n=3, T=T)))
-    dat = torch.stack(dat, dim=0).view(N, T, 1, res, res)
-    print(dat.type())
-    dat = dat.float()
+    dat = torch.stack(dat, dim=0).view(N, T, 1, res, res).float()
     torch.save(dat, f'bouncing_balls_training_data_{T}.pt')
 
     N = 200
