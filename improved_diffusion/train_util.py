@@ -9,6 +9,7 @@ import torch.distributed as dist
 from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 import wandb
+from time import time
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -162,6 +163,7 @@ class TrainLoop:
         self.model.convert_to_fp16()
 
     def run_loop(self):
+        last_sample_time = time()
         while (
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
@@ -177,6 +179,8 @@ class TrainLoop:
                     return
             if self.sample_interval is not None and self.step != 0 and self.step % self.sample_interval == 0:
                 self.log_samples()
+                logger.logkv('time_between_samples', time()-last_sample_time)
+                last_sample_time = time()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
@@ -317,6 +321,7 @@ class TrainLoop:
             return params
 
     def log_samples(self):
+        sample_start = time()
         self.model.eval()
         logger.log("sampling...")
         img_size = next(self.data)[0].shape[-1]
@@ -344,6 +349,7 @@ class TrainLoop:
         # ---------------------------------------------------------------------
         images = np.concatenate([images[:, t] for t in range(self.model.T)], axis=2)
         logger.logkvs({f'sample-{i}': wandb.Image(image) for i, image in enumerate(images)})
+        logger.logkv('sampling_time', time()-sample_start)
         self.model.train()
 
 
