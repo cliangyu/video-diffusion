@@ -370,7 +370,7 @@ class TrainLoop:
         )
         # ---------------------------------------------------------------------
         sample = sample * (1-obs_mask)   # mark observations by showing just red channel
-        sample[:, :, :1] = batch[:, :, :1, :, :] * obs_mask
+        sample[:, :, :1] = sample[:, :, :1] + batch[:, :, :1, :, :] * obs_mask
         gather_and_log_videos('sample', sample)
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)
