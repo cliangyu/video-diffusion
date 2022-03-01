@@ -21,6 +21,7 @@ from .fp16_util import (
 )
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
+from .rng_util import rng_decorator
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -350,6 +351,7 @@ class TrainLoop:
         else:
             return params
 
+    @rng_decorator(seed=0)
     def log_samples(self):
         sample_start = time()
         self.model.eval()
