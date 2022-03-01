@@ -162,13 +162,35 @@ class TrainLoop:
         self.master_params = make_master_params(self.model_params)
         self.model.convert_to_fp16()
 
+    def sample_video_mask(self, data, mask_type):
+        like = data[..., :1, :1, :1]  # B x T x 1 x 1 x 1
+        B, T, *_ = like.shape
+        if mask_type == 'zero':
+            return th.zeros_like(like)
+        elif mask_type == 'obs':
+            n_obs = th.randint_like(like[:, :1], high=T)
+            count = th.arange(0, T, device=like.device)\
+                      .view(1, T, 1, 1, 1).expand(B, T, 1, 1, 1)
+            return (count < n_obs).float().view(B, T, 1, 1, 1)
+        elif mask_type == 'marg':
+            return (th.rand_like(like) < 0.2).float()
+
+    def sample_all_masks(self, batch):
+        obs_mask = self.sample_video_mask(batch, 'obs')
+        partly_marg_mask = self.sample_video_mask(batch, 'marg')
+        fully_marg_mask = self.sample_video_mask(batch, 'zero')
+        dynamics_mask = (1-obs_mask)*(1-partly_marg_mask)*(1-fully_marg_mask)
+        return obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
+
     def run_loop(self):
         last_sample_time = time()
         while (
             not self.lr_anneal_steps
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
+
             batch, cond = next(self.data)
+
             self.run_step(batch, cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -200,6 +222,7 @@ class TrainLoop:
         zero_grad(self.model_params)
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
+            obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(micro)
             micro_cond = {
                 k: v[i : i + self.microbatch].to(dist_util.dev())
                 for k, v in cond.items()
@@ -212,7 +235,9 @@ class TrainLoop:
                 self.ddp_model,
                 micro,
                 t,
-                model_kwargs=micro_cond,
+                model_kwargs={**micro_cond, 'obs_mask': obs_mask, 'partly_marg_mask': partly_marg_mask,
+                              'fully_marg_mask': fully_marg_mask, 'x0': batch},
+                dynamics_mask=dynamics_mask,
             )
 
             if last_batch or not self.use_ddp:
@@ -326,18 +351,26 @@ class TrainLoop:
         sample_start = time()
         self.model.eval()
         logger.log("sampling...")
-        img_size = next(self.data)[0].shape[-1]
+        batch, _ = next(self.data)
+        batch = batch[:self.microbatch].to(dist_util.dev())
+        obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(batch)
+        img_size = batch.shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
         sample_fn = (
-            self.diffusion.p_sample_loop  # could be generalised
+            self.diffusion.p_sample_loop
         )
         sample = sample_fn(
             self.model,
             (self.batch_size, self.model.T, 3, img_size, img_size),
-            clip_denoised=True,  # could be generalised
-            model_kwargs={},
+            clip_denoised=True,
+            model_kwargs={'x0': batch, 'obs_mask': obs_mask,
+                          'partly_marg_mask': partly_marg_mask,
+                          'fully_marg_mask': fully_marg_mask},
+            dynamics_mask=dynamics_mask,
         )
         # ---------------------------------------------------------------------
+        sample = sample * (1-obs_mask)   # mark observations by showing just red channel
+        sample[:, :, :1] = batch[:, :, :1, :, :] * obs_mask
         gather_and_log_videos('sample', sample)
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)

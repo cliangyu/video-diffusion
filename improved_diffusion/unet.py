@@ -225,7 +225,7 @@ class AttentionBlock(nn.Module):
         attn_mask is a mask of shape B x T of what can attend to things, or be attended to
         """
         BT, C, *spatial = x.shape
-        B = BT//self.T
+        B, T = BT//self.T, self.T
         x = x.view(B, self.T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
         if attn_mask is not None:
             attn_mask = attn_mask.view(B, T, 1, 1).expand(B, T, *spatial)
@@ -268,7 +268,7 @@ class QKVAttention(nn.Module):
         ).float()  # More stable with f16 than dividing afterwards
         if attn_mask is not None:
             inf_mask = (1-attn_mask)
-            inf_mask[inf_mask == 1] = torch.inf
+            inf_mask[inf_mask == 1] = th.inf
             weight = weight - inf_mask.view(n, 1, t)
         weight = th.softmax(weight, dim=-1).type(weight.dtype)
         return th.einsum("bts,bcs->bct", weight, v)
@@ -598,7 +598,7 @@ class UNetVideoModel(UNetModel):
         timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
         return super().forward(
             x, timesteps, frame_indices=frame_indices, attn_mask=attn_mask
-        ).view(B, T, C, H, W)
+        ).view(B, T, self.out_channels, H, W)
 
     def add_positional_encodings(self, h, frame_indices):
         h = super().add_positional_encodings(h)
@@ -615,25 +615,25 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
 
     def __init__(self, **kwargs):
         kwargs['in_channels'] += 2
-        self.base = BaseClass(**kwargs)
+        super().__init__(**kwargs)
 
-    def forward(self, xt, x0, partly_marg_mask,
+    def forward(self, x, x0, partly_marg_mask,
                 fully_marg_mask, obs_mask, **kwargs):
         """
         fully_marg_mask - things we marginalise out of transformer as well as dynamics
         masks should not have shape for C, H, or W dimensions (can generalise if necessary)
         """
-        *leading_dims, C, H, W = xt.shape
-        partly_marg_mask = partly_marg_mask.view(*leading_dims, 1, 1, 1)
-        obs_mask = obs_mask.view(*leading_dims, 1, 1, 1)
-        indicator_template = th.ones_like(xt[:, :, :1, :, :])
+        *leading_dims, C, H, W = x.shape
+        indicator_template = th.ones_like(x[:, :, :1, :, :])
         partly_marg_indicator = indicator_template * partly_marg_mask
         obs_indicator = indicator_template * obs_mask
-        x = th.cat([xt*(1-partly_marg_mask)*(1-obs_mask) + x0*obs_mask,
+        infer_mask = (1-partly_marg_mask)*(1-obs_mask)*(1-fully_marg_mask)
+        x = th.cat([x*infer_mask + x0*obs_mask,
                     obs_indicator,
                     partly_marg_indicator],
                    dim=2)
-        return super().forward(x, attn_mask=1-fully_marg_mask, **kwargs)
+        out = super().forward(x, attn_mask=1-fully_marg_mask, **kwargs)
+        return out * infer_mask
 
 
 class SuperResModel(UNetModel):

@@ -3,7 +3,7 @@ import inspect
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import SuperResModel, UNetModel, UNetVideoModel
+from .unet import SuperResModel, UNetModel, UNetVideoModel, CondMargVideoModel
 
 NUM_CLASSES = 1000
 
@@ -42,6 +42,7 @@ def video_model_and_diffusion_defaults():
     defaults['use_spatial_encoding'] = True
     defaults['use_frame_encoding'] = True
     defaults['cross_frame_attention'] = True
+    defaults['do_cond_marg'] = True
     return defaults
 
 
@@ -119,6 +120,7 @@ def create_video_model_and_diffusion(
     use_spatial_encoding,
     use_frame_encoding,
     cross_frame_attention,
+    do_cond_marg,
 ):
     model = create_video_model(
         T,
@@ -136,6 +138,7 @@ def create_video_model_and_diffusion(
         use_spatial_encoding=use_spatial_encoding,
         use_frame_encoding=use_frame_encoding,
         cross_frame_attention=cross_frame_attention,
+        do_cond_marg=do_cond_marg,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -212,6 +215,7 @@ def create_video_model(
     use_spatial_encoding,
     use_frame_encoding,
     cross_frame_attention,
+    do_cond_marg,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -226,7 +230,8 @@ def create_video_model(
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
 
-    return UNetVideoModel(
+    ModelClass = CondMargVideoModel if do_cond_marg else UNetVideoModel
+    return ModelClass(
         T=T,
         in_channels=3,
         model_channels=num_channels,

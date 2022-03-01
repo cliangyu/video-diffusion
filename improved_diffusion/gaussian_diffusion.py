@@ -394,6 +394,7 @@ class GaussianDiffusion:
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
+        dynamics_mask=None,
         device=None,
         progress=False,
     ):
@@ -422,6 +423,7 @@ class GaussianDiffusion:
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
+            dynamics_mask=dynamics_mask,
             device=device,
             progress=progress,
         ):
@@ -436,6 +438,7 @@ class GaussianDiffusion:
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
+        dynamics_mask=None,
         device=None,
         progress=False,
     ):
@@ -465,6 +468,7 @@ class GaussianDiffusion:
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():
+                img = img * dynamics_mask
                 out = self.p_sample(
                     model,
                     img,
@@ -567,6 +571,7 @@ class GaussianDiffusion:
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
+        dynamics_mask=None,
         device=None,
         progress=False,
         eta=0.0,
@@ -599,6 +604,7 @@ class GaussianDiffusion:
         clip_denoised=True,
         denoised_fn=None,
         model_kwargs=None,
+        dynamics_mask=None,
         device=None,
         progress=False,
         eta=0.0,
@@ -640,7 +646,7 @@ class GaussianDiffusion:
                 img = out["sample"]
 
     def _vb_terms_bpd(
-        self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None
+            self, model, x_start, x_t, t, clip_denoised=True, model_kwargs=None, dynamics_mask=None,
     ):
         """
         Get a term for the variational lower-bound.
@@ -661,20 +667,20 @@ class GaussianDiffusion:
         kl = normal_kl(
             true_mean, true_log_variance_clipped, out["mean"], out["log_variance"]
         )
-        kl = mean_flat(kl) / np.log(2.0)
+        kl = mean_flat(kl, mask=dynamics_mask) / np.log(2.0)
 
         decoder_nll = -discretized_gaussian_log_likelihood(
             x_start, means=out["mean"], log_scales=0.5 * out["log_variance"]
         )
         assert decoder_nll.shape == x_start.shape
-        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+        decoder_nll = mean_flat(decoder_nll, mask=dynamics_mask) / np.log(2.0)
 
         # At the first timestep return the decoder NLL,
         # otherwise return KL(q(x_{t-1}|x_t,x_0) || p(x_{t-1}|x_t))
         output = th.where((t == 0), decoder_nll, kl)
         return {"output": output, "pred_xstart": out["pred_xstart"]}
 
-    def training_losses(self, model, x_start, t, model_kwargs=None, noise=None):
+    def training_losses(self, model, x_start, t, model_kwargs=None, dynamics_mask=None, noise=None):
         """
         Compute training losses for a single timestep.
 
@@ -694,7 +700,6 @@ class GaussianDiffusion:
         x_t = self.q_sample(x_start, t, noise=noise)
 
         terms = {}
-
         if self.loss_type == LossType.KL or self.loss_type == LossType.RESCALED_KL:
             terms["loss"] = self._vb_terms_bpd(
                 model=model,
@@ -707,7 +712,7 @@ class GaussianDiffusion:
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
+            model_output = model(x_t, timesteps=self._scale_timesteps(t), **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -739,7 +744,7 @@ class GaussianDiffusion:
                 ModelMeanType.EPSILON: noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms["mse"] = mean_flat((target - model_output) ** 2)
+            terms["mse"] = mean_flat((target - model_output) ** 2, mask=dynamics_mask)
             if "vb" in terms:
                 terms["loss"] = terms["mse"] + terms["vb"]
             else:
@@ -749,7 +754,7 @@ class GaussianDiffusion:
 
         return terms
 
-    def _prior_bpd(self, x_start):
+    def _prior_bpd(self, x_start, dynamics_mask=None):
         """
         Get the prior KL term for the variational lower-bound, measured in
         bits-per-dim.
@@ -765,9 +770,9 @@ class GaussianDiffusion:
         kl_prior = normal_kl(
             mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0
         )
-        return mean_flat(kl_prior) / np.log(2.0)
+        return mean_flat(kl_prior, mask=dynamics_mask) / np.log(2.0)
 
-    def calc_bpd_loop(self, model, x_start, clip_denoised=True, model_kwargs=None):
+    def calc_bpd_loop(self, model, x_start, clip_denoised=True, model_kwargs=None, dynamics_mask=None):
         """
         Compute the entire variational lower-bound, measured in bits-per-dim,
         as well as other related quantities.
@@ -806,9 +811,9 @@ class GaussianDiffusion:
                     model_kwargs=model_kwargs,
                 )
             vb.append(out["output"])
-            xstart_mse.append(mean_flat((out["pred_xstart"] - x_start) ** 2))
+            xstart_mse.append(mean_flat((out["pred_xstart"] - x_start) ** 2, mask=dynamics_mask))
             eps = self._predict_eps_from_xstart(x_t, t_batch, out["pred_xstart"])
-            mse.append(mean_flat((eps - noise) ** 2))
+            mse.append(mean_flat((eps - noise) ** 2, mask=dynamics_mask()))
 
         vb = th.stack(vb, dim=1)
         xstart_mse = th.stack(xstart_mse, dim=1)
