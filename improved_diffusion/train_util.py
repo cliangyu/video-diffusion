@@ -48,6 +48,7 @@ class TrainLoop:
         weight_decay=0.0,
         lr_anneal_steps=0,
         sample_interval=None,
+        do_inefficient_marg=True,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -60,6 +61,7 @@ class TrainLoop:
             if isinstance(ema_rate, float)
             else [float(x) for x in ema_rate.split(",")]
         )
+        self.do_inefficient_marg = do_inefficient_marg
         self.log_interval = log_interval
         self.sample_interval = sample_interval
         self.save_interval = save_interval
@@ -177,8 +179,9 @@ class TrainLoop:
 
     def sample_all_masks(self, batch):
         obs_mask = self.sample_video_mask(batch, 'obs')
-        partly_marg_mask = self.sample_video_mask(batch, 'marg')
-        fully_marg_mask = self.sample_video_mask(batch, 'zero')
+        pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
+        partly_marg_mask = self.sample_video_mask(batch, pt)
+        fully_marg_mask = self.sample_video_mask(batch, ft)
         dynamics_mask = (1-obs_mask)*(1-partly_marg_mask)*(1-fully_marg_mask)
         return obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
 

@@ -53,6 +53,7 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        do_inefficient_marg=args.do_inefficient_marg,
     ).run_loop()
 
 
@@ -72,6 +73,7 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        do_inefficient_marg=True,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
