@@ -402,14 +402,18 @@ class TrainLoop:
             dynamics_mask=dynamics_mask,
         )
         # ---------------------------------------------------------------------
-        vis = orig_batch
-        vis[:, :, :1] = 0    # set redness to neutral to mark observations
-        all_is_latent = dynamics_mask.view(sample.shape[:2]).bool()  # TODO this will show obs and marged things as the same
-        for vis_element, is_latent, frame_indices_element, sample_element in zip(vis, all_is_latent, frame_indices, sample):
-            latent_frame_indices = frame_indices_element[frame_indices_element[is_latent]]
-            latent_samples = sample_element[is_latent]
-            vis_element[latent_frame_indices] = latent_samples
-        gather_and_log_videos('sample', vis)
+        batch_vis = th.zeros_like(orig_batch)
+        batch_is_latent = dynamics_mask.view(sample.shape[:2]).bool()
+        batch_is_obs = obs_mask.view(sample.shape[:2]).bool()
+        for vis, is_latent, is_obs, frame_indices_element, data_element, sampled_element in zip(
+                batch_vis, batch_is_latent, batch_is_obs, frame_indices, orig_batch, sample
+        ):
+            obs_indices = frame_indices_element[is_obs]
+            vis[obs_indices] = data_element[obs_indices]
+            vis[obs_indices][:, :, :1] = 0  # mutilate observed frames
+            latent_indices = frame_indices_element[is_latent]
+            vis[latent_indices] = sampled_element[is_latent]
+        gather_and_log_videos('sample', batch_vis)
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)
         self.model.train()
