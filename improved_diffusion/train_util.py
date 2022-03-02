@@ -405,12 +405,12 @@ class TrainLoop:
         batch_vis = th.zeros_like(orig_batch)
         batch_is_latent = dynamics_mask.view(sample.shape[:2]).bool()
         batch_is_obs = obs_mask.view(sample.shape[:2]).bool()
+        orig_batch[:, :, :1] = 0   #mutilate observed frames
         for vis, is_latent, is_obs, frame_indices_element, data_element, sampled_element in zip(
                 batch_vis, batch_is_latent, batch_is_obs, frame_indices, orig_batch, sample
         ):
             obs_indices = frame_indices_element[is_obs]
             vis[obs_indices] = data_element[obs_indices]
-            vis[obs_indices][:, :, :1] = 0  # mutilate observed frames
             latent_indices = frame_indices_element[is_latent]
             vis[latent_indices] = sampled_element[is_latent]
         gather_and_log_videos('sample', batch_vis)
