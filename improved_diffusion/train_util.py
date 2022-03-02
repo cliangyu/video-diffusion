@@ -181,10 +181,35 @@ class TrainLoop:
     def sample_all_masks(self, batch):
         obs_mask = self.sample_video_mask(batch, 'obs')
         pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
-        partly_marg_mask = self.sample_video_mask(batch, pt)
-        fully_marg_mask = self.sample_video_mask(batch, ft)
-        dynamics_mask = (1-obs_mask)*(1-partly_marg_mask)*(1-fully_marg_mask)
-        return obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
+        latent_mask = 1 - obs_mask
+        partly_marg_mask = self.sample_video_mask(batch, pt) * latent_mask
+        latent_mask = latent_mask * (1-partly_marg_mask)
+        fully_marg_mask = self.sample_video_mask(batch, ft) * latent_mask
+        dynamics_mask = latent_mask * (1-fully_marg_mask)
+        # delete as many frames as possible fiven fully_marg_mask
+        print('pre', [t.shape for t in (batch, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask)])
+        fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
+            self.gather_unmasked_elements(
+                (1-fully_marg_mask), [batch, obs_mask, partly_marg_mask, dynamics_mask]
+        )
+        print('post', [t.shape for t in (batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask)])
+        return batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
+
+    def gather_unmasked_elements(self, mask, tensors):
+        B, T, *_ = mask.shape
+        mask = mask.view(B, T)  # remove unit C, H, W dims
+        effective_T = mask.sum(dim=1).max().int()
+        print('effective_T:', effective_T)
+        new_mask = th.zeros_like(mask[:, :effective_T])
+        indices = th.zeros_like(mask[:, :effective_T], dtype=th.int64)
+        new_tensors = [th.zeros_like(t[:, :effective_T]) for t in tensors]
+        for b in range(B):
+            instance_T = mask[b].sum().int()
+            new_mask[b, :instance_T] = 1
+            indices[b, :instance_T] = mask[b].nonzero().flatten()
+            for new_t, t in zip(new_tensors, tensors):
+                new_t[b, :instance_T] = t[b][mask[b]==1]
+        return new_mask.view(B, effective_T, 1, 1, 1), new_tensors, indices
 
     def run_loop(self):
         last_sample_time = time()
@@ -226,7 +251,7 @@ class TrainLoop:
         zero_grad(self.model_params)
         for i in range(0, batch.shape[0], self.microbatch):
             micro = batch[i : i + self.microbatch].to(dist_util.dev())
-            obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(micro)
+            micro, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(micro)
             micro_cond = {
                 k: v[i : i + self.microbatch].to(dist_util.dev())
                 for k, v in cond.items()
@@ -239,8 +264,9 @@ class TrainLoop:
                 self.ddp_model,
                 micro,
                 t,
-                model_kwargs={**micro_cond, 'obs_mask': obs_mask, 'partly_marg_mask': partly_marg_mask,
-                              'fully_marg_mask': fully_marg_mask, 'x0': batch},
+                model_kwargs={**micro_cond, 'frame_indices': frame_indices, 'obs_mask': obs_mask,
+                              'partly_marg_mask': partly_marg_mask,
+                              'fully_marg_mask': fully_marg_mask, 'x0': micro},
                 dynamics_mask=dynamics_mask,
             )
 
@@ -358,7 +384,8 @@ class TrainLoop:
         logger.log("sampling...")
         batch, _ = next(self.data)
         batch = batch[:self.microbatch].to(dist_util.dev())
-        obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(batch)
+        batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(batch)
+
         img_size = batch.shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
         sample_fn = (
@@ -368,9 +395,11 @@ class TrainLoop:
             self.model,
             (self.batch_size, self.model.T, 3, img_size, img_size),
             clip_denoised=True,
-            model_kwargs={'x0': batch, 'obs_mask': obs_mask,
-                          'partly_marg_mask': partly_marg_mask,
-                          'fully_marg_mask': fully_marg_mask},
+            model_kwargs={
+                'frame_indices': frame_indices,
+                'x0': batch, 'obs_mask': obs_mask,
+                'partly_marg_mask': partly_marg_mask,
+                'fully_marg_mask': fully_marg_mask},
             dynamics_mask=dynamics_mask,
         )
         # ---------------------------------------------------------------------

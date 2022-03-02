@@ -593,7 +593,6 @@ class UNetVideoModel(UNetModel):
         B, T, C, H, W = x.shape
         if frame_indices is None:
             frame_indices = th.arange(0, T, device=x.device).view(1, T).expand(B, T)
-        assert T == self.T
         x = x.view(B*T, C, H, W)
         timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
         return super().forward(
@@ -627,7 +626,9 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
         indicator_template = th.ones_like(x[:, :, :1, :, :])
         partly_marg_indicator = indicator_template * partly_marg_mask
         obs_indicator = indicator_template * obs_mask
+        print('infer_mask', (1-partly_marg_mask).shape, (1-obs_mask).shape, (1-fully_marg_mask).shape)
         infer_mask = (1-partly_marg_mask)*(1-obs_mask)*(1-fully_marg_mask)
+        print('in model', x.shape, infer_mask.shape, x0.shape, obs_mask.shape, obs_indicator.shape, partly_marg_indicator.shape)
         x = th.cat([x*infer_mask + x0*obs_mask,
                     obs_indicator,
                     partly_marg_indicator],
