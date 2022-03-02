@@ -176,7 +176,9 @@ class TrainLoop:
                       .view(1, T, 1, 1, 1).expand(B, T, 1, 1, 1)
             return (count < n_obs).float().view(B, T, 1, 1, 1)
         elif mask_type == 'marg':
-            return (th.rand_like(like) < 0.2).float()
+            mask  = (th.rand_like(like) < 0.2).float()
+            mask[:, -1] = 0.   # never marginalise final frame
+            return mask
 
     def sample_all_masks(self, batch):
         obs_mask = self.sample_video_mask(batch, 'obs')
@@ -187,19 +189,17 @@ class TrainLoop:
         fully_marg_mask = self.sample_video_mask(batch, ft) * latent_mask
         dynamics_mask = latent_mask * (1-fully_marg_mask)
         # delete as many frames as possible fiven fully_marg_mask
-        print('pre', [t.shape for t in (batch, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask)])
-        fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
+        not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
             self.gather_unmasked_elements(
                 (1-fully_marg_mask), [batch, obs_mask, partly_marg_mask, dynamics_mask]
         )
-        print('post', [t.shape for t in (batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask)])
+        fully_marg_mask = 1 - not_fully_marg_mask
         return batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
 
     def gather_unmasked_elements(self, mask, tensors):
         B, T, *_ = mask.shape
         mask = mask.view(B, T)  # remove unit C, H, W dims
         effective_T = mask.sum(dim=1).max().int()
-        print('effective_T:', effective_T)
         new_mask = th.zeros_like(mask[:, :effective_T])
         indices = th.zeros_like(mask[:, :effective_T], dtype=th.int64)
         new_tensors = [th.zeros_like(t[:, :effective_T]) for t in tensors]
@@ -382,9 +382,8 @@ class TrainLoop:
         sample_start = time()
         self.model.eval()
         logger.log("sampling...")
-        batch, _ = next(self.data)
-        batch = batch[:self.microbatch].to(dist_util.dev())
-        batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(batch)
+        orig_batch = next(self.data)[0][:self.microbatch].to(dist_util.dev())
+        batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(orig_batch)
 
         img_size = batch.shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
@@ -393,7 +392,7 @@ class TrainLoop:
         )
         sample = sample_fn(
             self.model,
-            (self.batch_size, self.model.T, 3, img_size, img_size),
+            (self.microbatch, self.model.T, 3, img_size, img_size),
             clip_denoised=True,
             model_kwargs={
                 'frame_indices': frame_indices,
@@ -403,9 +402,14 @@ class TrainLoop:
             dynamics_mask=dynamics_mask,
         )
         # ---------------------------------------------------------------------
-        sample = sample * (1-obs_mask)   # mark observations by showing just red channel
-        sample[:, :, :1] = sample[:, :, :1] + batch[:, :, :1, :, :] * obs_mask
-        gather_and_log_videos('sample', sample)
+        vis = orig_batch
+        vis[:, :, :1] = 0    # set redness to neutral to mark observations
+        all_is_latent = dynamics_mask.view(sample.shape[:2]).bool()  # TODO this will show obs and marged things as the same
+        for vis_element, is_latent, frame_indices_element, sample_element in zip(vis, all_is_latent, frame_indices, sample):
+            latent_frame_indices = frame_indices_element[frame_indices_element[is_latent]]
+            latent_samples = sample_element[is_latent]
+            vis_element[latent_frame_indices] = latent_samples
+        gather_and_log_videos('sample', vis)
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)
         self.model.train()
