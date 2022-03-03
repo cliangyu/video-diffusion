@@ -165,28 +165,33 @@ class TrainLoop:
         self.master_params = make_master_params(self.model_params)
         self.model.convert_to_fp16()
 
-    def sample_video_mask(self, data, mask_type):
+    def sample_video_mask(self, data, mask_type, exclude=None):
         like = data[..., :1, :1, :1]  # B x T x 1 x 1 x 1
         B, T, *_ = like.shape
         if mask_type == 'zero':
             return th.zeros_like(like)
         elif mask_type == 'obs':
-            n_obs = th.randint_like(like[:, :1], high=T)
+            n_obs = th.randint_like(like[:, :1], high=T//5)
             count = th.arange(0, T, device=like.device)\
                       .view(1, T, 1, 1, 1).expand(B, T, 1, 1, 1)
-            return (count < n_obs).float().view(B, T, 1, 1, 1)
+            mask = (count < n_obs).float().view(B, T, 1, 1, 1)
         elif mask_type == 'marg':
-            mask  = (th.rand_like(like) < 0.2).float()
+            mask = th.zeros_like(like)
+            for r, row in enumerate(mask):
+                n_marg = np.random.randint(low=int(2*T/3), high=int(4*T/5), size=())
+                row[np.random.choice(T, n_marg, replace=False)] = 1.
             mask[:, -1] = 0.   # never marginalise final frame
-            return mask
+        if exclude is not None:
+            mask = mask * (1 - exclude)
+        return mask
 
     def sample_all_masks(self, batch):
         obs_mask = self.sample_video_mask(batch, 'obs')
         pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
         latent_mask = 1 - obs_mask
-        partly_marg_mask = self.sample_video_mask(batch, pt) * latent_mask
+        partly_marg_mask = self.sample_video_mask(batch, pt, exclude=1-latent_mask)
         latent_mask = latent_mask * (1-partly_marg_mask)
-        fully_marg_mask = self.sample_video_mask(batch, ft) * latent_mask
+        fully_marg_mask = self.sample_video_mask(batch, ft, exclude=1-latent_mask)
         dynamics_mask = latent_mask * (1-fully_marg_mask)
         # delete as many frames as possible fiven fully_marg_mask
         not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
@@ -392,7 +397,7 @@ class TrainLoop:
         )
         sample = sample_fn(
             self.model,
-            (self.microbatch, self.model.T, 3, img_size, img_size),
+            batch.shape,
             clip_denoised=True,
             model_kwargs={
                 'frame_indices': frame_indices,

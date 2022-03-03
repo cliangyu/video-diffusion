@@ -468,7 +468,6 @@ class GaussianDiffusion:
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             with th.no_grad():
-                img = img * dynamics_mask
                 out = self.p_sample(
                     model,
                     img,
