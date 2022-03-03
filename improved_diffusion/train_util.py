@@ -179,7 +179,8 @@ class TrainLoop:
             mask = th.zeros_like(like)
             for r, row in enumerate(mask):
                 n_marg = np.random.randint(low=int(2*T/3), high=int(4*T/5), size=())
-                row[np.random.choice(T, n_marg, replace=False)] = 1.
+                indices = T//5+np.random.choice(T-T//5, size=n_marg, replace=False)
+                row[indices] = 1.
             mask[:, -1] = 0.   # never marginalise final frame
         if exclude is not None:
             mask = mask * (1 - exclude)
