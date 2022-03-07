@@ -168,10 +168,11 @@ class TrainLoop:
 
     def sample_video_mask(self, data, mask_type, exclude=None, set_mask=()):
         like = data[len(set_mask):, :, :1, :1, :1]  # B x T x 1 x 1 x 1
+        B, T, *_ = like.shape
         if exclude is None:
             exclude = th.zeros_like(like)
-        exclude = exclude[len(set_mask):]
-        B, T, *_ = like.shape
+        else:
+            exclude = exclude[len(set_mask):]
         if mask_type == 'zero':
             mask = th.zeros_like(like)
         elif mask_type == 'obs':
@@ -399,7 +400,8 @@ class TrainLoop:
             return params
 
     def make_interesting_masks(self, batch, max_obs_latent=10):
-        masks = {'zero': th.zeros_like(batch[:3, :, :1, :1, :1])}
+        n_masks = 4
+        masks = {'zero': th.zeros_like(batch[:n_masks, :, :1, :1, :1])}
         n_obs = 3
         max_latent = max_obs_latent - n_obs
         masks['obs'] = masks['zero'].clone()
@@ -411,7 +413,7 @@ class TrainLoop:
             masks['marg'][2, 1+n_obs:1+n_obs+max_latent*3:3] = 0.
             masks['marg'][3, -max_latent:] = 0.
         except IndexError:
-            assert len(masks) < 4
+            assert len(masks) < n_masks
         return masks
 
     @rng_decorator(seed=0)
