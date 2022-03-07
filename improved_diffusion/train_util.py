@@ -117,6 +117,7 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
+        self.valid_batch = next(self.data)[0][:self.microbatch]
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -167,21 +168,30 @@ class TrainLoop:
 
     def sample_video_mask(self, data, mask_type, exclude=None):
         like = data[..., :1, :1, :1]  # B x T x 1 x 1 x 1
+        if exclude is None:
+            exclude = th.zeros_like(like)
         B, T, *_ = like.shape
         if mask_type == 'zero':
             return th.zeros_like(like)
         elif mask_type == 'obs':
-            n_obs = th.randint_like(like[:, :1], high=T//5)
-            count = th.arange(0, T, device=like.device)\
-                      .view(1, T, 1, 1, 1).expand(B, T, 1, 1, 1)
-            mask = (count < n_obs).float().view(B, T, 1, 1, 1)
-        elif mask_type == 'marg':
             mask = th.zeros_like(like)
             for r, row in enumerate(mask):
-                n_marg = np.random.randint(low=int(2*T/3), high=int(4*T/5), size=())
-                indices = T//5+np.random.choice(T-T//5, size=n_marg, replace=False)
-                row[indices] = 1.
-            mask[:, -1] = 0.   # never marginalise final frame
+                n_obs = np.random.randint(T//5, size=())
+                pos = np.random.randint(T-n_obs+1, size=())
+                row[pos:pos+n_obs] = 1.
+        elif mask_type == 'marg':
+            mask = th.zeros_like(like)
+            np_exclude = exclude.view(B, T).int().cpu().numpy()
+            for r, row in enumerate(mask):
+                # sample such that up to 10 things are excluded or marginalised
+                max_unmarg_unexcluded = 10
+                n_excluded = np_exclude[r].sum()
+                max_unmarg = max_unmarg_unexcluded - n_excluded
+                n_unmarg = np.random.randint(low=1, high=max_unmarg, size=())
+                unmarg_indices = np.random.choice(T-n_excluded, size=n_unmarg, replace=False)
+                unmarg_indices = th.nonzero(1-exclude[r], as_tuple=True)[0][unmarg_indices]
+                row[exclude[r]==0] = 1.
+                row[unmarg_indices] = 0.
         if exclude is not None:
             mask = mask * (1 - exclude)
         return mask
@@ -388,8 +398,9 @@ class TrainLoop:
         sample_start = time()
         self.model.eval()
         logger.log("sampling...")
-        orig_batch = next(self.data)[0][:self.microbatch].to(dist_util.dev())
-        batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = self.sample_all_masks(orig_batch)
+        orig_batch = self.valid_batch.to(dist_util.dev())
+        batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = \
+            self.sample_all_masks(orig_batch)
 
         img_size = batch.shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
@@ -411,7 +422,7 @@ class TrainLoop:
         batch_vis = th.zeros_like(orig_batch)
         batch_is_latent = dynamics_mask.view(sample.shape[:2]).bool()
         batch_is_obs = obs_mask.view(sample.shape[:2]).bool()
-        orig_batch[:, :, :1] = 0   #mutilate observed frames
+        orig_batch[:, :, :1] = 0   # mutilate observed frames
         for vis, is_latent, is_obs, frame_indices_element, data_element, sampled_element in zip(
                 batch_vis, batch_is_latent, batch_is_obs, frame_indices, orig_batch, sample
         ):
