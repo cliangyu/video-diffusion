@@ -166,13 +166,14 @@ class TrainLoop:
         self.master_params = make_master_params(self.model_params)
         self.model.convert_to_fp16()
 
-    def sample_video_mask(self, data, mask_type, exclude=None):
-        like = data[..., :1, :1, :1]  # B x T x 1 x 1 x 1
+    def sample_video_mask(self, data, mask_type, exclude=None, set_mask=()):
+        like = data[len(set_mask):, :, :1, :1, :1]  # B x T x 1 x 1 x 1
         if exclude is None:
             exclude = th.zeros_like(like)
+        exclude = exclude[len(set_mask):]
         B, T, *_ = like.shape
         if mask_type == 'zero':
-            return th.zeros_like(like)
+            mask = th.zeros_like(like)
         elif mask_type == 'obs':
             mask = th.zeros_like(like)
             for r, row in enumerate(mask):
@@ -194,15 +195,19 @@ class TrainLoop:
                 row[unmarg_indices] = 0.
         if exclude is not None:
             mask = mask * (1 - exclude)
+        if len(set_mask) > 0:
+            mask = th.cat([set_mask, mask], dim=0)
         return mask
 
-    def sample_all_masks(self, batch):
-        obs_mask = self.sample_video_mask(batch, 'obs')
+    def sample_all_masks(self, batch, set_masks={'obs': (), 'marg': (), 'zero': ()}):
+        obs_mask = self.sample_video_mask(batch, 'obs', set_mask=set_masks['obs'])
         pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
         latent_mask = 1 - obs_mask
-        partly_marg_mask = self.sample_video_mask(batch, pt, exclude=1-latent_mask)
+        partly_marg_mask = self.sample_video_mask(batch, pt, exclude=1-latent_mask,
+                                                  set_mask=set_masks[pt])
         latent_mask = latent_mask * (1-partly_marg_mask)
-        fully_marg_mask = self.sample_video_mask(batch, ft, exclude=1-latent_mask)
+        fully_marg_mask = self.sample_video_mask(batch, ft, exclude=1-latent_mask,
+                                                 set_mask=set_masks[ft])
         dynamics_mask = latent_mask * (1-fully_marg_mask)
         # delete as many frames as possible fiven fully_marg_mask
         not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
@@ -393,14 +398,31 @@ class TrainLoop:
         else:
             return params
 
+    def make_interesting_masks(self, batch, max_obs_latent=10):
+        masks = {'zero': th.zeros_like(batch[:3, :, :1, :1, :1])}
+        n_obs = 3
+        max_latent = max_obs_latent - n_obs
+        masks['obs'] = masks['zero'].clone()
+        masks['obs'][:, 1:1+n_obs] = 1.
+        masks['marg'] = 1 - masks['obs']
+        try:
+            masks['marg'][0, 1+n_obs:1+n_obs+max_latent:] = 0.
+            masks['marg'][1, 1+n_obs:1+n_obs+max_latent*2:2] = 0.
+            masks['marg'][2, 1+n_obs:1+n_obs+max_latent*3:3] = 0.
+            masks['marg'][3, -max_latent:] = 0.
+        except IndexError:
+            assert len(masks) < 4
+        return masks
+
     @rng_decorator(seed=0)
     def log_samples(self):
         sample_start = time()
         self.model.eval()
         logger.log("sampling...")
         orig_batch = self.valid_batch.to(dist_util.dev())
+        set_masks = self.make_interesting_masks(orig_batch)
         batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = \
-            self.sample_all_masks(orig_batch)
+            self.sample_all_masks(orig_batch, set_masks=set_masks)
 
         img_size = batch.shape[-1]
         # copied from scripts/image_sample.py ---------------------------------
