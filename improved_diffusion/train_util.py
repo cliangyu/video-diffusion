@@ -468,28 +468,44 @@ class TrainLoop:
         self.model.train()
 
 
+def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
+    """Cocatenates a list (or batched tensor) of CxHxW images, with padding in
+    between, for pretty viewing.
+    """
+    _, h, w = images[0].shape
+    pad_h, pad_w = (h, pad_dim) if horizontal else (pad_dim, w)
+    padding = th.zeros_like(images[0][:, :pad_h, :pad_w]) + pad_val
+    images_with_padding = []
+    for image in images:
+        images_with_padding.extend([image, padding])
+    images_with_padding = images_with_padding[:-1]   # remove final pad
+    return th.cat(images_with_padding, dim=2 if horizontal else 1)
+
+
 def gather_and_log_videos(name, array):
     """
     Unnormalises and logs videos given as B x T x C x H x W tensors.
     """
     array = array.cuda()
     array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
-    array = array.permute(0, 1, 3, 4, 2)
     array = array.contiguous()
     gathered_arrays = [th.zeros_like(array) for _ in range(dist.get_world_size())]
     dist.all_gather(gathered_arrays, array)  # gather not supported with NCCL
-    images = np.concatenate(
-        [array.cpu().numpy() for array in gathered_arrays],
-        axis=0
-    )
-    divider = images[:, 0, :, :1]*0 + 127
-    T = array.shape[1]
-    images = np.concatenate(
-        [np.concatenate([images[:, t], divider], axis=2) for t in range(T)],
-        axis=2
-    )
+    videos = th.cat([array.cpu() for array in gathered_arrays], dim=0)
     dist.barrier()
-    logger.logkvs({f'{name}-{i}': wandb.Image(image) for i, image in enumerate(images)})
+
+    final_frames = th.zeros_like(videos[:, :1])
+    final_frames[..., ::2, 1::2] = 255  # checkerboard pattern to mark the end
+    videos = th.cat([videos, final_frames], dim=1)
+    merged_videos = th.stack(
+        [concat_images_with_padding(frames, horizontal=False, pad_dim=2)
+         for frames in videos.transpose(1, 0)]
+    )
+    logger.logkv(name, wandb.Video(merged_videos))
+    logger.logkv(
+        name+'-flat',
+        wandb.Image(concat_images_with_padding(merged_videos[:-1], horizontal=True, pad_dim=1).permute(1, 2, 0).numpy())
+    )
 
 
 def parse_resume_step_from_filename(filename):
