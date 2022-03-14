@@ -50,6 +50,8 @@ class TrainLoop:
         lr_anneal_steps=0,
         sample_interval=None,
         do_inefficient_marg=True,
+        n_valid_batches=1,
+        max_frames=10,
     ):
         self.model = model
         self.diffusion = diffusion
@@ -63,6 +65,7 @@ class TrainLoop:
             else [float(x) for x in ema_rate.split(",")]
         )
         self.do_inefficient_marg = do_inefficient_marg
+        self.max_frames = max_frames
         self.log_interval = log_interval
         self.sample_interval = sample_interval
         self.save_interval = save_interval
@@ -117,7 +120,9 @@ class TrainLoop:
                 )
             self.use_ddp = False
             self.ddp_model = self.model
-        self.valid_batch = next(self.data)[0][:self.microbatch]
+        self.n_valid_batches = n_valid_batches
+        self.valid_batches = [next(self.data)[0][:self.microbatch]
+                            for i in range(self.n_valid_batches)]
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -166,57 +171,97 @@ class TrainLoop:
         self.master_params = make_master_params(self.model_params)
         self.model.convert_to_fp16()
 
-    def sample_video_mask(self, data, mask_type, exclude=None, set_mask=()):
-        like = data[len(set_mask):, :, :1, :1, :1]  # B x T x 1 x 1 x 1
-        B, T, *_ = like.shape
-        if exclude is None:
-            exclude = th.zeros_like(like)
-        else:
-            exclude = exclude[len(set_mask):]
-        if mask_type == 'zero':
-            mask = th.zeros_like(like)
-        elif mask_type == 'obs':
-            mask = th.zeros_like(like)
-            for r, row in enumerate(mask):
-                n_obs = np.random.randint(T//5, size=())
-                pos = np.random.randint(T-n_obs+1, size=())
-                row[pos:pos+n_obs] = 1.
-        elif mask_type == 'marg':
-            mask = th.zeros_like(like)
-            np_exclude = exclude.view(B, T).int().cpu().numpy()
-            for r, row in enumerate(mask):
-                # sample such that up to 10 things are excluded or marginalised
-                max_unmarg_unexcluded = 10
-                n_excluded = np_exclude[r].sum()
-                max_unmarg = max_unmarg_unexcluded - n_excluded
-                n_unmarg = np.random.randint(low=1, high=max_unmarg, size=())
-                unmarg_indices = np.random.choice(T-n_excluded, size=n_unmarg, replace=False)
-                unmarg_indices = th.nonzero(1-exclude[r], as_tuple=True)[0][unmarg_indices]
-                row[exclude[r]==0] = 1.
-                row[unmarg_indices] = 0.
-        if exclude is not None:
-            mask = mask * (1 - exclude)
-        if len(set_mask) > 0:
-            mask = th.cat([set_mask, mask], dim=0)
-        return mask
+    # def sample_video_mask(self, data, mask_type, min_ones, max_ones, exclude=None, set_mask=()):  # max_ones is max_zeros if mask_type=='marg'
+    #     like = data[len(set_mask):, :, :1, :1, :1]  # B x T x 1 x 1 x 1
+    #     B, T, *_ = like.shape
+    #     if exclude is None:
+    #         exclude = th.zeros_like(like)
+    #     else:
+    #         exclude = exclude[len(set_mask):]    # TODO flip definitions of marg masks to be latent_masks
+    #     if mask_type == 'zero':
+    #         mask = th.zeros_like(like)
+    #     elif mask_type in ['obs', 'marg']:
+    #         mask = th.zeros_like(like)
+    #         for row, row_exclude in zip(mask, exclude):
+    #             print(row_exclude.sum().cpu().item(), max_ones, min_ones, mask_type)
+    #             n_ones = np.random.randint(min_ones, max_ones-row_exclude.sum().cpu().item()+1)
+    #             while row.sum() < n_ones:
+    #                 s = min(np.random.randint(1, n_ones+1), n_ones-row.sum().cpu().int().item())
+    #                 max_scale = T / (s-0.999)
+    #                 scale = np.exp(np.random.rand() * np.log(max_scale))
+    #                 pos = np.random.rand() * (T - scale*(s-1))
+    #                 indices = [int(pos+i*scale) for i in range(s)]
+    #                 row[indices] = 1.
+    #                 row[row_exclude==1] = 0.
+    #         if mask_type == 'marg':
+    #             mask = 1 - mask
+    #     if exclude is not None:
+    #         mask = mask * (1 - exclude)
+    #     if len(set_mask) > 0:
+    #         mask = th.cat([set_mask, mask], dim=0)
+    #     return mask
+
+    # def sample_all_masks(self, batch, set_masks={'obs': (), 'marg': (), 'zero': ()}):
+    #     N = self.max_frames
+    #     pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
+    #     partly_marg_mask = self.sample_video_mask(batch, pt, min_ones=1, max_ones=N, set_mask=set_masks[pt])
+    #     latent_mask = 1 - partly_marg_mask
+    #     fully_marg_mask = self.sample_video_mask(batch, ft, min_ones=1, max_ones=N, exclude=1-latent_mask, set_mask=set_masks[ft])
+    #     latent_mask = latent_mask * (1-fully_marg_mask)
+    #     obs_mask = self.sample_video_mask(batch, 'obs', min_ones=0, max_ones=N, exclude=1-latent_mask, set_mask=set_masks['obs'])
+    #     latent_mask = latent_mask * (1 - obs_mask)
+    #     # delete as many frames as possible fiven fully_marg_mask
+    #     not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, latent_mask), frame_indices =\
+    #         self.gather_unmasked_elements(
+    #             (1-fully_marg_mask), [batch, obs_mask, partly_marg_mask, latent_mask]
+    #     )
+    #     fully_marg_mask = 1 - not_fully_marg_mask
+    #     # print('latent', latent_mask.flatten(start_dim=1).sum(dim=1),
+    #     #       '\nobs', obs_mask.flatten(start_dim=1).sum(dim=1),
+    #     #       '\npartly', partly_marg_mask.flatten(start_dim=1).sum(dim=1),
+    #     #       '\nfully', fully_marg_mask.flatten(start_dim=1).sum(dim=1))
+    #     return batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, latent_mask
+
+    def sample_some_indices(self, max_indices, T):
+        s = th.randint(low=1, high=max_indices+1, size=())
+        max_scale = T / (s-0.999)
+        scale = np.exp(np.random.rand() * np.log(max_scale))
+        pos = th.rand(()) * (T - scale*(s-1))
+        return [int(pos+i*scale) for i in range(s)]
 
     def sample_all_masks(self, batch, set_masks={'obs': (), 'marg': (), 'zero': ()}):
-        obs_mask = self.sample_video_mask(batch, 'obs', set_mask=set_masks['obs'])
-        pt, ft = ('marg', 'zero') if self.do_inefficient_marg else ('zero', 'marg')
-        latent_mask = 1 - obs_mask
-        partly_marg_mask = self.sample_video_mask(batch, pt, exclude=1-latent_mask,
-                                                  set_mask=set_masks[pt])
-        latent_mask = latent_mask * (1-partly_marg_mask)
-        fully_marg_mask = self.sample_video_mask(batch, ft, exclude=1-latent_mask,
-                                                 set_mask=set_masks[ft])
-        dynamics_mask = latent_mask * (1-fully_marg_mask)
-        # delete as many frames as possible fiven fully_marg_mask
-        not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, dynamics_mask), frame_indices =\
+        p_observed_latent_marg = th.tensor([0.33, 0.33, 0.33] if self.do_inefficient_marg else [0.5, 0.5, 0])
+        N = self.max_frames
+        B, T, *_ = batch.shape
+        masks = {k: th.zeros_like(batch[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
+        for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]):
+            latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
+            while True:
+                mask_i = th.distributions.Categorical(probs=p_observed_latent_marg).sample()
+                mask = [obs_row, latent_row, marg_row][mask_i]
+                indices = th.tensor(self.sample_some_indices(max_indices=N, T=T))
+                taken = (obs_row[indices] + latent_row[indices] + marg_row[indices]).view(-1)
+                indices = indices[taken==0]  # remove indices that are already used in a mask
+                if len(indices) > N - sum(obs_row) - sum(latent_row) - sum(marg_row):
+                    break
+                mask[indices] = 1.
+        # TODO fix rest of code to get rid of the bullshit below
+        obs_mask = masks['obs']
+        partly_marg_mask = masks['kinda_marg']
+        fully_marg_mask = 1 - masks['latent'] - masks['obs'] - masks['kinda_marg']
+        latent_mask = masks['latent']
+        n_set = len(set_masks['obs'])
+        if n_set > 0:
+            obs_mask[:n_set] = set_masks['obs']
+            fully_marg_mask[:n_set] = set_masks['marg']
+            partly_marg_mask[:n_set] = 0.
+            latent_mask = 1 - obs_mask - fully_marg_mask - partly_marg_mask
+        not_fully_marg_mask, (batch, obs_mask, partly_marg_mask, latent_mask), frame_indices =\
             self.gather_unmasked_elements(
-                (1-fully_marg_mask), [batch, obs_mask, partly_marg_mask, dynamics_mask]
+                (1-fully_marg_mask), [batch, obs_mask, partly_marg_mask, latent_mask]
         )
         fully_marg_mask = 1 - not_fully_marg_mask
-        return batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask
+        return batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, latent_mask
 
     def gather_unmasked_elements(self, mask, tensors):
         B, T, *_ = mask.shape
@@ -400,7 +445,7 @@ class TrainLoop:
             return params
 
     def make_interesting_masks(self, batch, max_obs_latent=10):
-        n_masks = 4
+        n_masks = 3
         masks = {'zero': th.zeros_like(batch[:n_masks, :, :1, :1, :1])}
         n_obs = 3
         max_latent = max_obs_latent - n_obs
@@ -410,8 +455,7 @@ class TrainLoop:
         try:
             masks['marg'][0, 1+n_obs:1+n_obs+max_latent:] = 0.
             masks['marg'][1, 1+n_obs:1+n_obs+max_latent*2:2] = 0.
-            masks['marg'][2, 1+n_obs:1+n_obs+max_latent*3:3] = 0.
-            masks['marg'][3, -max_latent:] = 0.
+            masks['marg'][2, 1+n_obs:1+n_obs+max_latent*4:4] = 0.
         except IndexError:
             assert len(masks) < n_masks
         return masks
@@ -421,7 +465,7 @@ class TrainLoop:
         sample_start = time()
         self.model.eval()
         logger.log("sampling...")
-        orig_batch = self.valid_batch.to(dist_util.dev())
+        orig_batch = th.cat(self.valid_batches, dim=0).to(dist_util.dev())
         set_masks = self.make_interesting_masks(orig_batch)
         batch, frame_indices, obs_mask, partly_marg_mask, fully_marg_mask, dynamics_mask = \
             self.sample_all_masks(orig_batch, set_masks=set_masks)
@@ -431,17 +475,24 @@ class TrainLoop:
         sample_fn = (
             self.diffusion.p_sample_loop
         )
-        sample = sample_fn(
-            self.model,
-            batch.shape,
-            clip_denoised=True,
-            model_kwargs={
-                'frame_indices': frame_indices,
-                'x0': batch, 'obs_mask': obs_mask,
-                'partly_marg_mask': partly_marg_mask,
-                'fully_marg_mask': fully_marg_mask},
-            dynamics_mask=dynamics_mask,
-        )
+        samples = []
+        chunk_kwargs = dict(dim=0, chunks=self.n_valid_batches)
+        for fi, x0, om, pmm, fmm in zip(
+                th.chunk(frame_indices, **chunk_kwargs), th.chunk(batch, **chunk_kwargs),
+                th.chunk(obs_mask, **chunk_kwargs), th.chunk(partly_marg_mask, **chunk_kwargs),
+                th.chunk(fully_marg_mask, **chunk_kwargs)):
+            samples.append(sample_fn(
+                self.model,
+                x0.shape,
+                clip_denoised=True,
+                model_kwargs={
+                    'frame_indices': fi,
+                    'x0': x0, 'obs_mask': om,
+                    'partly_marg_mask': pmm,
+                    'fully_marg_mask': fmm},
+                dynamics_mask=dynamics_mask,
+            ))
+        sample = th.cat(samples, dim=0)
 
         # ---------------------------------------------------------------------
         batch_vis = th.zeros_like(orig_batch)
@@ -550,3 +601,7 @@ def log_loss_dict(diffusion, ts, losses):
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
             logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
+
+# def inclusice_randint(l, h=None):
+#     low, high = (0, l) if h is None else (l, h)
+#     return low if low == high else np.random.randint(low, high+1)

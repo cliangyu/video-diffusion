@@ -136,7 +136,7 @@ def bounce_vec(res, n=2, T=128, r =None, m =None):
 
 if __name__ == "__main__":
     res=32
-    T = 30
+    T = 100
     N = 5000
     dat = []
     for i in range(N):

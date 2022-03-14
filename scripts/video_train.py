@@ -54,6 +54,8 @@ def main():
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
         do_inefficient_marg=args.do_inefficient_marg,
+        n_valid_batches=args.n_valid_batches,
+        max_frames=args.max_frames,
     ).run_loop()
 
 
@@ -73,7 +75,9 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
-        do_inefficient_marg=True,
+        do_inefficient_marg=False,
+        n_valid_batches=1,
+        max_frames=10,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
