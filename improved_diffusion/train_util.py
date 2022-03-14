@@ -444,11 +444,11 @@ class TrainLoop:
         else:
             return params
 
-    def make_interesting_masks(self, batch, max_obs_latent=10):
+    def make_interesting_masks(self, batch):
         n_masks = 3
         masks = {'zero': th.zeros_like(batch[:n_masks, :, :1, :1, :1])}
         n_obs = 3
-        max_latent = max_obs_latent - n_obs
+        max_latent = self.max_frames - n_obs
         masks['obs'] = masks['zero'].clone()
         masks['obs'][:, 1:1+n_obs] = 1.
         masks['marg'] = 1 - masks['obs']
