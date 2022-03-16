@@ -578,11 +578,13 @@ class UNetVideoModel(UNetModel):
     def __init__(self, T,
                  use_frame_encoding,
                  cross_frame_attention,
+                 enforce_position_invariance,
                  *args, **kwargs,
                  ):
         self.T = T
         self.use_frame_encoding = use_frame_encoding
         self.cross_frame_attention = cross_frame_attention
+        self.enforce_position_invariance = enforce_position_invariance
         super().__init__(
             *args, **kwargs,
         )
@@ -605,7 +607,10 @@ class UNetVideoModel(UNetModel):
         B, T = frame_indices.shape
         BT, C, H, W = h.shape  # TODO randomise offset for indices to ensure it uses relative positions and generalises better?
         assert BT == B*T
-        emb = frame_embedding(frame_indices, C, max_period=self.T*10)
+        max_period = self.T*10
+        if self.enforce_position_invariance:
+            frame_indices = frame_indices + th.randint_like(frame_indices[:, :1], high=max_period)
+        emb = frame_embedding(frame_indices, C, max_period=max_period)
         return h + emb.view(BT, C, 1, 1)
 
 
