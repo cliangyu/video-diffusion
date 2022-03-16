@@ -389,8 +389,8 @@ class TrainLoop:
         else:
             return params
 
-    def make_interesting_masks(self, batch):  # TODO make sensible for parallel runs
-        n_masks = 3
+    def make_interesting_masks(self, batch):
+        n_masks = min(3, len(batch))
         def make_zeros():
             return th.zeros_like(batch[:n_masks, :, :1, :1, :1])
         obs_mask = make_zeros()
