@@ -390,7 +390,7 @@ class TrainLoop:
             return params
 
     def make_interesting_masks(self, batch):
-        n_masks = 3
+        n_masks = min(3, len(batch))
         def make_zeros():
             return th.zeros_like(batch[:n_masks, :, :1, :1, :1])
         obs_mask = make_zeros()
