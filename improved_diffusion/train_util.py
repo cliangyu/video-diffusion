@@ -246,7 +246,7 @@ class TrainLoop:
                 last_sample_time = time()
             self.step += 1
             if self.step == 1:
-                gather_and_log_videos('data', batch)
+                gather_and_log_videos('data/', batch, log_as='both')
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()
@@ -389,7 +389,7 @@ class TrainLoop:
         else:
             return params
 
-    def make_interesting_masks(self, batch):
+    def make_interesting_masks(self, batch):  # TODO make sensible for parallel runs
         n_masks = 3
         def make_zeros():
             return th.zeros_like(batch[:n_masks, :, :1, :1, :1])
@@ -439,23 +439,24 @@ class TrainLoop:
         sample = th.cat(samples, dim=0)
 
         # visualise the samples -----------------------------------------------
-        batch_vis = th.zeros_like(orig_batch)
-        tinted_batch = orig_batch.clone()
-        tinted_batch[:, :, :1] = 0   # mutilate observed frames
-        error = th.zeros_like(orig_batch)
-        rmse = 0.
-        for vis, error_row, is_latent, is_obs, frame_indices_element, data_element, tinted_element, sampled_element in zip(
-                batch_vis, error, latent_mask.flatten(start_dim=1).bool(), obs_mask.flatten(start_dim=1).bool(),
-                frame_indices, orig_batch, tinted_batch, sample
-        ):
-            obs_indices = frame_indices_element[is_obs]
-            vis[obs_indices] = tinted_element[obs_indices]
-            latent_indices = frame_indices_element[is_latent]
-            vis[latent_indices] = sampled_element[is_latent]
-            error_row[latent_indices] = sampled_element[is_latent] - data_element[latent_indices]
-            rmse += (error_row[latent_indices]**2).mean().sqrt() / len(batch_vis)
-        gather_and_log_videos('sample', batch_vis)
-        gather_and_log_videos('error/sample', error)
+        tinted = batch.clone()
+        tinted[:, :, :1] = 0   # mutilate observed frames
+        vis = sample*latent_mask + tinted*obs_mask
+        vis_all = th.zeros_like(orig_batch)
+        error = latent_mask * (sample - batch)
+        error_all = th.zeros_like(orig_batch)
+        for b in range(len(batch)):
+            is_latent = latent_mask[b, :, 0, 0, 0].bool()
+            is_obs = obs_mask[b, :, 0, 0, 0].bool()
+            existing_frame_indices = frame_indices[b, is_latent+is_obs]
+            vis_all[b, existing_frame_indices] = vis[b, :len(existing_frame_indices)]
+            latent_frame_indices = frame_indices[b, is_latent]
+            error_all[b, latent_frame_indices] = error[b, is_latent]
+        rmse = (error**2).mean().sqrt() / (len(batch) * is_latent.float().mean())
+        gather_and_log_videos('sample/', vis_all, log_as='array')
+        n_samples_with_preset_masks = len(set_masks['obs']) * self.n_valid_repeats
+        gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
+        gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)
         logger.logkv('rmse', rmse.cpu().item())
@@ -476,9 +477,10 @@ def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
     return th.cat(images_with_padding, dim=2 if horizontal else 1)
 
 
-def gather_and_log_videos(name, array):
+def gather_and_log_videos(name, array, log_as='both'):
     """
     Unnormalises and logs videos given as B x T x C x H x W tensors.
+        :`as` can be 'array', 'video', or 'both'
     """
     array = array.cuda()
     array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
@@ -488,18 +490,20 @@ def gather_and_log_videos(name, array):
     videos = th.cat([array.cpu() for array in gathered_arrays], dim=0)
     dist.barrier()
 
-    final_frames = th.zeros_like(videos[:, :1])
-    final_frames[..., ::2, 1::2] = 255  # checkerboard pattern to mark the end
-    videos = th.cat([videos, final_frames], dim=1)
-    merged_videos = th.stack(
-        [concat_images_with_padding(frames, horizontal=False, pad_dim=2)
-         for frames in videos.transpose(1, 0)]
-    )
-    logger.logkv(name, wandb.Video(merged_videos))
-    logger.logkv(
-        name+'-flat',
-        wandb.Image(concat_images_with_padding(merged_videos[:-1], horizontal=True, pad_dim=1).permute(1, 2, 0).numpy())
-    )
+    if log_as in ['array', 'both']:
+        # log all videos/frames as one single image array
+        img = concat_images_with_padding(
+            [concat_images_with_padding(vid, horizontal=True, pad_dim=1, pad_val=255) for vid in videos],
+            horizontal=False, pad_dim=2, pad_val=255
+        )
+        img = img.permute(1, 2, 0).numpy()
+        logger.logkv(name+'array', wandb.Image(img))
+    if log_as in ['video', 'both']:
+        # log each batch element as its own video
+        final_frame = th.zeros_like(videos[0, :1])
+        final_frame[..., ::2, 1::2] = 255  # checkerboard pattern to mark the end
+        for i, video in enumerate(videos):
+            logger.logkv(name+f'video-{i}', wandb.Video(th.cat([video, final_frame], dim=0)))
 
 
 def parse_resume_step_from_filename(filename):
