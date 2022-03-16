@@ -55,6 +55,7 @@ def main():
         lr_anneal_steps=args.lr_anneal_steps,
         do_inefficient_marg=args.do_inefficient_marg,
         n_valid_batches=args.n_valid_batches,
+        n_valid_repeats=args.n_valid_repeats,
         max_frames=args.max_frames,
     ).run_loop()
 
@@ -77,6 +78,7 @@ def create_argparser():
         fp16_scale_growth=1e-3,
         do_inefficient_marg=False,
         n_valid_batches=1,
+        n_valid_repeats=2,
         max_frames=10,
     )
     defaults.update(video_model_and_diffusion_defaults())

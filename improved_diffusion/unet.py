@@ -615,23 +615,18 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
         kwargs['in_channels'] += 2
         super().__init__(**kwargs)
 
-    def forward(self, x, x0, partly_marg_mask,
-                fully_marg_mask, obs_mask, **kwargs):
-        """
-        fully_marg_mask - things we marginalise out of transformer as well as dynamics
-        masks should not have shape for C, H, or W dimensions (can generalise if necessary)
-        """
+    def forward(self, x, x0, obs_mask, latent_mask, kinda_marg_mask, **kwargs):
         *leading_dims, C, H, W = x.shape
         indicator_template = th.ones_like(x[:, :, :1, :, :])
-        partly_marg_indicator = indicator_template * partly_marg_mask
         obs_indicator = indicator_template * obs_mask
-        infer_mask = (1-partly_marg_mask)*(1-obs_mask)*(1-fully_marg_mask)
-        x = th.cat([x*infer_mask + x0*obs_mask,
+        kinda_marg_indicator = indicator_template * kinda_marg_mask
+        x = th.cat([x*latent_mask + x0*obs_mask,
                     obs_indicator,
-                    partly_marg_indicator],
+                    kinda_marg_indicator],
                    dim=2)
-        out = super().forward(x, attn_mask=1-fully_marg_mask, **kwargs)
-        return out * infer_mask
+        attn_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
+        out = super().forward(x, attn_mask=attn_mask, **kwargs)
+        return out * latent_mask
 
 
 class SuperResModel(UNetModel):
