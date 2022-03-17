@@ -178,7 +178,13 @@ class TrainLoop:
         max_scale = T / (s-0.999)
         scale = np.exp(np.random.rand() * np.log(max_scale))
         pos = th.rand(()) * (T - scale*(s-1))
-        return [int(pos+i*scale) for i in range(s)]
+        indices = [int(pos+i*scale) for i in range(s)]
+        # do some recursion if we have somehow failed to satisfy the consrtaints
+        if all(i<T and i>=0 for i in indices):
+            return indices
+        else:
+            print('warning: sampled indices', [int(pos+i*scale) for i in range(s)], 'trying again')
+            return self.sample_some_indices(max_indices, T)
 
     def sample_all_masks(self, batch, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
         p_observed_latent_marg = th.tensor([0.33, 0.33, 0.33] if self.do_inefficient_marg else [0.5, 0.5, 0])
