@@ -2,14 +2,26 @@ from configparser import MAX_INTERPOLATION_DEPTH
 from PIL import Image
 import blobfile as bf
 import os
-NO_MPI = ('NO_MPI' in os.environ)
-if not NO_MPI:
-    from mpi4py import MPI
+import io
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
-import tensorflow as tf
-import tensorflow_datasets as tfds
+from torchvision.transforms import ToTensor, Resize
+
+NO_MPI = ('NO_MPI' in os.environ)
+if not NO_MPI:
+    from mpi4py import MPI
+
+try:
+    import tensorflow as tf
+    import tensorflow_datasets as tfds
+    # Disable all GPUS (this avoids tensorflow allocating the whole GPU, causing problems for pytorch)
+    tf.config.set_visible_devices([], 'GPU')
+    visible_devices = tf.config.get_visible_devices()
+    for device in visible_devices:
+        assert device.device_type != 'GPU'
+except ModuleNotFoundError:
+    print('WARNING: Failed tensorflow import.')
 
 
 def load_data(
@@ -61,28 +73,31 @@ def load_data(
 
 
 def load_video_data(data_path, batch_size, deterministic=False, T=None):
+    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+        data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
+    shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
+    num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
+    def get_loader(dataset):
+        return DataLoader(
+            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=1, drop_last=True
+        )
     if "minerl" in data_path:
         loader = MineRLDataLoader(
             data_path, batch_size,
             seq_len=T,
             drop_last=True,
             deterministic=deterministic,
-            shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
-            num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),)
+            shard=shard,
+            num_shards=num_shards,)
+    elif "mazes" in data_path:
+        print('init mazes dataset')
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards,)
+        print('initted mazes dataset')
+        loader = get_loader(dataset)
+        print('initted mazes loader')
     else:
-        dataset = TensorVideoDataset(
-            data_path,
-            shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
-            num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
-        )
-        if deterministic:
-            loader = DataLoader(
-                dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-            )
-        else:
-            loader = DataLoader(
-                dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
-            )
+        dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
+        loader = get_loader(dataset)
     while True:
         yield from loader
 
@@ -161,6 +176,7 @@ class TensorVideoDataset(Dataset):
             vid = vid.expand(-1, 3, -1, -1)  # network is designed for RGB
         return vid, {}
 
+
 class MineRLDataLoader:
     def __init__(self, path, batch_size, seq_len,
                  shard=0, num_shards=1, train=True,
@@ -203,3 +219,25 @@ class MineRLDataLoader:
             video_length = batch.shape[1]
             start_idx = np.random.randint(low=0, high=video_length - self._seq_len + 1)
             yield torch.as_tensor(batch[:, start_idx:start_idx+self._seq_len]), {}
+
+
+class MazesDataset:
+    """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
+    """
+    def __init__(self, path, shard, num_shards):
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        self.path = path
+
+
+    def __len__(self):
+        return len(os.listdir(self.path))
+
+    def __getitem__(self, idx):
+        path = os.path.join(self.path, "{}.pt".format(idx))
+        data = torch.load(path)
+        # resizes from 84x84 to 64x64
+        byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
+        video = torch.stack([byte_to_tensor(frame) for frame in data])
+        video = 2*video - 1
+        return video, {}
