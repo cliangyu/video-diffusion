@@ -15,6 +15,11 @@ if not NO_MPI:
 try:
     import tensorflow as tf
     import tensorflow_datasets as tfds
+    # Disable all GPUS (this avoids tensorflow allocating the whole GPU, causing problems for pytorch)
+    tf.config.set_visible_devices([], 'GPU')
+    visible_devices = tf.config.get_visible_devices()
+    for device in visible_devices:
+        assert device.device_type != 'GPU'
 except ModuleNotFoundError:
     print('WARNING: Failed tensorflow import.')
 
@@ -68,6 +73,8 @@ def load_data(
 
 
 def load_video_data(data_path, batch_size, deterministic=False):
+    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+        data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
     num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
     def get_loader(dataset):
@@ -190,7 +197,7 @@ class MineRLDataLoader:
             lambda x: tf.data.Dataset.from_tensor_slices(self._process_seq(x))
         )
         dataset = dataset.batch(batch_size, drop_remainder=drop_last,
-                                num_parallel_calls=4,  #tf.data.AUTOTUNE,
+                                num_parallel_calls=tf.data.AUTOTUNE,
                                 deterministic=deterministic)
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         if train and not deterministic:
