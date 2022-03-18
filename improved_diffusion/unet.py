@@ -605,7 +605,7 @@ class UNetVideoModel(UNetModel):
         if not self.use_frame_encoding:
             return h
         B, T = frame_indices.shape
-        BT, C, H, W = h.shape  # TODO randomise offset for indices to ensure it uses relative positions and generalises better?
+        BT, C, H, W = h.shape
         assert BT == B*T
         max_period = self.T*10
         if self.enforce_position_invariance:
