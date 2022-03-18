@@ -11,6 +11,12 @@ from torch.utils.data import DataLoader, Dataset
 import tensorflow as tf
 import tensorflow_datasets as tfds
 
+# Disable all GPUS (this avoids tensorflow allocating the whole GPU, causing problems for pytorch)
+tf.config.set_visible_devices([], 'GPU')
+visible_devices = tf.config.get_visible_devices()
+for device in visible_devices:
+    assert device.device_type != 'GPU'
+
 
 def load_data(
     *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
@@ -61,6 +67,8 @@ def load_data(
 
 
 def load_video_data(data_path, batch_size, deterministic=False):
+    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+        data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     if "minerl" in data_path:
         loader = MineRLDataLoader(
             data_path, batch_size,
