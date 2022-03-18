@@ -72,7 +72,7 @@ def load_data(
         yield from loader
 
 
-def load_video_data(data_path, batch_size, deterministic=False):
+def load_video_data(data_path, batch_size, T, deterministic=False):
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
@@ -84,14 +84,14 @@ def load_video_data(data_path, batch_size, deterministic=False):
     if "minerl" in data_path:
         loader = MineRLDataLoader(
             data_path, batch_size,
-            seq_len=100, #https://github.com/vaibhavsaxena11/cwvae/blob/62dd5050d3cmine20c1c40879539906c54492a756b59/configs/minerl.yml
+            seq_len=T,
             drop_last=True,
             deterministic=deterministic,
             shard=shard,
             num_shards=num_shards,)
     elif "mazes" in data_path:
         print('init mazes dataset')
-        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards,)
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
         print('initted mazes dataset')
         loader = get_loader(dataset)
         print('initted mazes loader')
@@ -178,9 +178,11 @@ class TensorVideoDataset(Dataset):
 
 
 class MineRLDataLoader:
-    def __init__(self, path, batch_size, shard=0, num_shards=1, train=True,
-                 seq_len=None, drop_last=True, deterministic=False, num_workers=0):
+    def __init__(self, path, batch_size, seq_len,
+                 shard=0, num_shards=1, train=True,
+                 drop_last=True, deterministic=False):
 
+        assert seq_len is not None
         self._seq_len = seq_len
         self._data_seq_len = 500
 
@@ -205,18 +207,7 @@ class MineRLDataLoader:
         self.dataset = dataset
 
     def _process_seq(self, seq):
-        if self._seq_len:
-            seq_len_tr = self._data_seq_len - (self._data_seq_len % self._seq_len)
-            seq = seq[:seq_len_tr]
-            seq = tf.reshape(
-                seq,
-                tf.concat(
-                    [[seq_len_tr // self._seq_len, self._seq_len], tf.shape(seq)[1:]],
-                    -1,
-                ),
-            )
-        else:
-            seq = tf.expand_dims(seq, 0)
+        seq = tf.expand_dims(seq, 0)
         seq = tf.cast(seq, tf.float32) / 255.0
         seq = seq * 2 - 1
         seq = tf.transpose(seq, [0, 1, 4, 2, 3])
@@ -224,17 +215,20 @@ class MineRLDataLoader:
 
     def __iter__(self):
         for batch in self.dataset:
-            yield torch.as_tensor(batch.numpy()), {}
+            batch = batch.numpy()
+            video_length = batch.shape[1]
+            start_idx = np.random.randint(low=0, high=video_length - self._seq_len + 1)
+            yield torch.as_tensor(batch[:, start_idx:start_idx+self._seq_len]), {}
 
 
 class MazesDataset:
     """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
-    def __init__(self, path, shard, num_shards):
+    def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
         self.path = path
-
+        self.T = T
 
     def __len__(self):
         return len(os.listdir(self.path))
@@ -242,6 +236,9 @@ class MazesDataset:
     def __getitem__(self, idx):
         path = os.path.join(self.path, "{}.pt".format(idx))
         data = torch.load(path)
+        if self.T < len(data):
+            start_i = np.random.randint(len(data) - self.T)
+            data = data[start_i:start_i+self.T]
         # resizes from 84x84 to 64x64
         byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
         video = torch.stack([byte_to_tensor(frame) for frame in data])
