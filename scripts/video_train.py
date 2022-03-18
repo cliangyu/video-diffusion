@@ -64,6 +64,7 @@ def main():
         n_valid_batches=args.n_valid_batches,
         n_valid_repeats=args.n_valid_repeats,
         max_frames=args.max_frames,
+        T=args.T,
     ).run_loop()
 
 
