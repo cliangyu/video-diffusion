@@ -458,7 +458,7 @@ class TrainLoop:
             vis_all[b, existing_frame_indices] = vis[b, :len(existing_frame_indices)]
             latent_frame_indices = frame_indices[b, is_latent]
             error_all[b, latent_frame_indices] = error[b, is_latent]
-        rmse = (error**2).mean().sqrt() / (len(batch) * is_latent.float().mean())
+        rmse = (error**2).mean().sqrt() / latent_mask.mean()
         gather_and_log_videos('sample/', vis_all, log_as='array')
         n_samples_with_preset_masks = len(set_masks['obs']) * self.n_valid_repeats
         gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
