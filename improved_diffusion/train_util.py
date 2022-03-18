@@ -405,7 +405,7 @@ class TrainLoop:
         n_obs = self.max_frames // 3
         n_latent = self.max_frames - n_obs
         for i in range(n_masks):
-            spacing = int((batch.shape[1] // self.max_frames)**(i/(n_masks-1)))
+            spacing = 1 if n_masks == 1 else int((batch.shape[1] // self.max_frames)**(i/(n_masks-1)))
             obs_mask[i, :n_obs*spacing:spacing] = 1.
             latent_mask[i, n_obs*spacing:self.max_frames*spacing:spacing] = 1.
         return {'obs': obs_mask, 'latent': latent_mask, 'kinda_marg': kinda_marg_mask}
