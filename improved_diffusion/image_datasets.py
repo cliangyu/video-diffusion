@@ -181,7 +181,7 @@ class MineRLDataLoader:
             lambda x: tf.data.Dataset.from_tensor_slices(self._process_seq(x))
         )
         dataset = dataset.batch(batch_size, drop_remainder=drop_last,
-                                num_parallel_calls=4,#tf.data.AUTOTUNE,
+                                num_parallel_calls=tf.data.AUTOTUNE,
                                 deterministic=deterministic)
         dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
         if train and not deterministic:
