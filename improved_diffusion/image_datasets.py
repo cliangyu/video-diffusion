@@ -1,12 +1,27 @@
+from configparser import MAX_INTERPOLATION_DEPTH
 from PIL import Image
 import blobfile as bf
 import os
-NO_MPI = ('NO_MPI' in os.environ)
-if not NO_MPI:
-    from mpi4py import MPI
+import io
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import ToTensor, Resize
+
+NO_MPI = ('NO_MPI' in os.environ)
+if not NO_MPI:
+    from mpi4py import MPI
+
+try:
+    import tensorflow as tf
+    import tensorflow_datasets as tfds
+    # Disable all GPUS (this avoids tensorflow allocating the whole GPU, causing problems for pytorch)
+    tf.config.set_visible_devices([], 'GPU')
+    visible_devices = tf.config.get_visible_devices()
+    for device in visible_devices:
+        assert device.device_type != 'GPU'
+except ModuleNotFoundError:
+    print('WARNING: Failed tensorflow import.')
 
 
 def load_data(
@@ -58,19 +73,31 @@ def load_data(
 
 
 def load_video_data(data_path, batch_size, deterministic=False):
-    dataset = TensorVideoDataset(
-        data_path,
-        shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
-        num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
-    )
-    if deterministic:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+        data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
+    shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
+    num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
+    def get_loader(dataset):
+        return DataLoader(
+            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=1, drop_last=True
         )
+    if "minerl" in data_path:
+        loader = MineRLDataLoader(
+            data_path, batch_size,
+            seq_len=100, #https://github.com/vaibhavsaxena11/cwvae/blob/62dd5050d3cmine20c1c40879539906c54492a756b59/configs/minerl.yml
+            drop_last=True,
+            deterministic=deterministic,
+            shard=shard,
+            num_shards=num_shards,)
+    elif "mazes" in data_path:
+        print('init mazes dataset')
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards,)
+        print('initted mazes dataset')
+        loader = get_loader(dataset)
+        print('initted mazes loader')
     else:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
-        )
+        dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
+        loader = get_loader(dataset)
     while True:
         yield from loader
 
@@ -148,3 +175,75 @@ class TensorVideoDataset(Dataset):
         if self.grayscale:
             vid = vid.expand(-1, 3, -1, -1)  # network is designed for RGB
         return vid, {}
+
+
+class MineRLDataLoader:
+    def __init__(self, path, batch_size, shard=0, num_shards=1, train=True,
+                 seq_len=None, drop_last=True, deterministic=False, num_workers=0):
+
+        self._seq_len = seq_len
+        self._data_seq_len = 500
+
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        
+        # Most of this initialization is taken from https://github.com/vaibhavsaxena11/cwvae/blob/master/data_loader.py
+        if train:
+            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["train"]
+        else:
+            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["test"]
+
+        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
+            lambda x: tf.data.Dataset.from_tensor_slices(self._process_seq(x))
+        )
+        dataset = dataset.batch(batch_size, drop_remainder=drop_last,
+                                num_parallel_calls=tf.data.AUTOTUNE,
+                                deterministic=deterministic)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        if train and not deterministic:
+            dataset = dataset.shuffle(10 * batch_size)
+        self.dataset = dataset
+
+    def _process_seq(self, seq):
+        if self._seq_len:
+            seq_len_tr = self._data_seq_len - (self._data_seq_len % self._seq_len)
+            seq = seq[:seq_len_tr]
+            seq = tf.reshape(
+                seq,
+                tf.concat(
+                    [[seq_len_tr // self._seq_len, self._seq_len], tf.shape(seq)[1:]],
+                    -1,
+                ),
+            )
+        else:
+            seq = tf.expand_dims(seq, 0)
+        seq = tf.cast(seq, tf.float32) / 255.0
+        seq = seq * 2 - 1
+        seq = tf.transpose(seq, [0, 1, 4, 2, 3])
+        return seq
+
+    def __iter__(self):
+        for batch in self.dataset:
+            yield torch.as_tensor(batch.numpy()), {}
+
+
+class MazesDataset:
+    """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
+    """
+    def __init__(self, path, shard, num_shards):
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        self.path = path
+
+
+    def __len__(self):
+        return len(os.listdir(self.path))
+
+    def __getitem__(self, idx):
+        path = os.path.join(self.path, "{}.pt".format(idx))
+        data = torch.load(path)
+        # resizes from 84x84 to 64x64
+        byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
+        video = torch.stack([byte_to_tensor(frame) for frame in data])
+        video = 2*video - 1
+        return video, {}
