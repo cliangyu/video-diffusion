@@ -39,6 +39,7 @@ def main():
     data = load_video_data(
         data_path=args.data_path,
         batch_size=args.batch_size,
+        T=args.T
     )
 
     logger.log("training...")

@@ -60,11 +60,11 @@ def load_data(
         yield from loader
 
 
-def load_video_data(data_path, batch_size, deterministic=False):
+def load_video_data(data_path, batch_size, deterministic=False, T=None):
     if "minerl" in data_path:
         loader = MineRLDataLoader(
             data_path, batch_size,
-            seq_len=100, #https://github.com/vaibhavsaxena11/cwvae/blob/62dd5050d3cmine20c1c40879539906c54492a756b59/configs/minerl.yml
+            seq_len=T,
             drop_last=True,
             deterministic=deterministic,
             shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
@@ -162,9 +162,11 @@ class TensorVideoDataset(Dataset):
         return vid, {}
 
 class MineRLDataLoader:
-    def __init__(self, path, batch_size, shard=0, num_shards=1, train=True,
-                 seq_len=None, drop_last=True, deterministic=False, num_workers=0):
+    def __init__(self, path, batch_size, seq_len,
+                 shard=0, num_shards=1, train=True,
+                 drop_last=True, deterministic=False):
 
+        assert seq_len is not None
         self._seq_len = seq_len
         self._data_seq_len = 500
 
@@ -189,18 +191,7 @@ class MineRLDataLoader:
         self.dataset = dataset
 
     def _process_seq(self, seq):
-        if self._seq_len:
-            seq_len_tr = self._data_seq_len - (self._data_seq_len % self._seq_len)
-            seq = seq[:seq_len_tr]
-            seq = tf.reshape(
-                seq,
-                tf.concat(
-                    [[seq_len_tr // self._seq_len, self._seq_len], tf.shape(seq)[1:]],
-                    -1,
-                ),
-            )
-        else:
-            seq = tf.expand_dims(seq, 0)
+        seq = tf.expand_dims(seq, 0)
         seq = tf.cast(seq, tf.float32) / 255.0
         seq = seq * 2 - 1
         seq = tf.transpose(seq, [0, 1, 4, 2, 3])
@@ -208,4 +199,7 @@ class MineRLDataLoader:
 
     def __iter__(self):
         for batch in self.dataset:
-            yield torch.as_tensor(batch.numpy()), {}
+            batch = batch.numpy()
+            video_length = batch.shape[1]
+            start_idx = np.random.randint(low=0, high=video_length - self._seq_len + 1)
+            yield torch.as_tensor(batch[:, start_idx:start_idx+self._seq_len]), {}
