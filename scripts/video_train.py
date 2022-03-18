@@ -3,6 +3,7 @@ Train a diffusion model on videos.
 """
 
 import argparse
+import os, sys
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_video_data
@@ -14,6 +15,11 @@ from improved_diffusion.script_util import (
     add_dict_to_argparser,
 )
 from improved_diffusion.train_util import TrainLoop
+
+
+if "--unobserve" in sys.argv:
+    sys.argv.remove("--unobserve")
+    os.environ["WANDB_MODE"] = "dryrun"
 
 
 def main():
