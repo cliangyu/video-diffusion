@@ -236,9 +236,11 @@ class TrainLoop:
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
 
+            t_0 = time()
             batch, cond = next(self.data)
 
             self.run_step(batch, cond)
+            logger.logkv("step_time", time() - t_0)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
