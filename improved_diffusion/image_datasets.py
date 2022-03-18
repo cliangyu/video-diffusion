@@ -1,3 +1,4 @@
+from configparser import MAX_INTERPOLATION_DEPTH
 from PIL import Image
 import blobfile as bf
 import os
@@ -7,6 +8,8 @@ if not NO_MPI:
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+import tensorflow as tf
+import tensorflow_datasets as tfds
 
 
 def load_data(
@@ -58,19 +61,28 @@ def load_data(
 
 
 def load_video_data(data_path, batch_size, deterministic=False):
-    dataset = TensorVideoDataset(
-        data_path,
-        shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
-        num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
-    )
-    if deterministic:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
-        )
+    if "minerl" in data_path:
+        loader = MineRLDataLoader(
+            data_path, batch_size,
+            seq_len=100, #https://github.com/vaibhavsaxena11/cwvae/blob/62dd5050d3cmine20c1c40879539906c54492a756b59/configs/minerl.yml
+            drop_last=True,
+            deterministic=deterministic,
+            shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+            num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),)
     else:
-        loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+        dataset = TensorVideoDataset(
+            data_path,
+            shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+            num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
         )
+        if deterministic:
+            loader = DataLoader(
+                dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
+            )
+        else:
+            loader = DataLoader(
+                dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
+            )
     while True:
         yield from loader
 
@@ -148,3 +160,52 @@ class TensorVideoDataset(Dataset):
         if self.grayscale:
             vid = vid.expand(-1, 3, -1, -1)  # network is designed for RGB
         return vid, {}
+
+class MineRLDataLoader:
+    def __init__(self, path, batch_size, shard=0, num_shards=1, train=True,
+                 seq_len=None, drop_last=True, deterministic=False, num_workers=0):
+
+        self._seq_len = seq_len
+        self._data_seq_len = 500
+
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        
+        # Most of this initialization is taken from https://github.com/vaibhavsaxena11/cwvae/blob/master/data_loader.py
+        if train:
+            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["train"]
+        else:
+            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["test"]
+
+        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
+            lambda x: tf.data.Dataset.from_tensor_slices(self._process_seq(x))
+        )
+        dataset = dataset.batch(batch_size, drop_remainder=drop_last,
+                                num_parallel_calls=4,#tf.data.AUTOTUNE,
+                                deterministic=deterministic)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+        if train and not deterministic:
+            dataset = dataset.shuffle(10 * batch_size)
+        self.dataset = dataset
+
+    def _process_seq(self, seq):
+        if self._seq_len:
+            seq_len_tr = self._data_seq_len - (self._data_seq_len % self._seq_len)
+            seq = seq[:seq_len_tr]
+            seq = tf.reshape(
+                seq,
+                tf.concat(
+                    [[seq_len_tr // self._seq_len, self._seq_len], tf.shape(seq)[1:]],
+                    -1,
+                ),
+            )
+        else:
+            seq = tf.expand_dims(seq, 0)
+        seq = tf.cast(seq, tf.float32) / 255.0
+        seq = seq * 2 - 1
+        seq = tf.transpose(seq, [0, 1, 4, 2, 3])
+        return seq
+
+    def __iter__(self):
+        for batch in self.dataset:
+            yield torch.as_tensor(batch.numpy()), {}
