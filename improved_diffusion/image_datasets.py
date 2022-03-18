@@ -72,7 +72,7 @@ def load_data(
         yield from loader
 
 
-def load_video_data(data_path, batch_size, deterministic=False, T=None):
+def load_video_data(data_path, batch_size, T, deterministic=False):
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
@@ -91,7 +91,7 @@ def load_video_data(data_path, batch_size, deterministic=False, T=None):
             num_shards=num_shards,)
     elif "mazes" in data_path:
         print('init mazes dataset')
-        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards,)
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
         print('initted mazes dataset')
         loader = get_loader(dataset)
         print('initted mazes loader')
@@ -224,11 +224,11 @@ class MineRLDataLoader:
 class MazesDataset:
     """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
-    def __init__(self, path, shard, num_shards):
+    def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
         self.path = path
-
+        self.T = T
 
     def __len__(self):
         return len(os.listdir(self.path))
@@ -236,6 +236,9 @@ class MazesDataset:
     def __getitem__(self, idx):
         path = os.path.join(self.path, "{}.pt".format(idx))
         data = torch.load(path)
+        if self.T < len(data):
+            start_i = np.random.randint(len(data) - self.T)
+            data = data[start_i:start_i+self.T]
         # resizes from 84x84 to 64x64
         byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
         video = torch.stack([byte_to_tensor(frame) for frame in data])

@@ -43,6 +43,7 @@ class TrainLoop:
         log_interval,
         save_interval,
         resume_checkpoint,
+        T,
         use_fp16=False,
         fp16_scale_growth=1e-3,
         schedule_sampler=None,
@@ -66,6 +67,7 @@ class TrainLoop:
             else [float(x) for x in ema_rate.split(",")]
         )
         self.do_inefficient_marg = do_inefficient_marg
+        self.T = T
         self.max_frames = max_frames
         self.log_interval = log_interval
         self.sample_interval = sample_interval
@@ -255,6 +257,7 @@ class TrainLoop:
             self.step += 1
             if self.step == 1:
                 gather_and_log_videos('data/', batch, log_as='both')
+                assert len(batch[0]) == self.T
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()
