@@ -106,7 +106,10 @@ def show_frame(frames, scene, views):
 if __name__ == '__main__':
     orig_dataset = 'mazes'
     torch_dataset_path = f'{orig_dataset}-torch'
-    os.mkdir(torch_dataset_path)
+    try:
+        os.mkdir(torch_dataset_path)
+    except FileExistsError:
+        pass
 
     dataset_info = DatasetInfo(
         basepath='mazes',
@@ -117,17 +120,23 @@ if __name__ == '__main__':
 
     for split in ['train', 'test']:
         torch_split_path = os.path.join(torch_dataset_path, split)
-        os.mkdir(torch_split_path)
+        try:
+            os.mkdir(torch_split_path)
+        except FileExistsError:
+            pass
         file_names = _get_dataset_files(dataset_info, split, '.')
         tot = 0
         for file in file_names:
             engine = tf.python_io.tf_record_iterator(file)
             for i, raw_data in enumerate(engine):
                 path = os.path.join(torch_split_path, f'{tot+i}.pt')
-                print(f' [-] converting scene {file}-{i} into {path}')
-                p = Process(target=convert_raw_to_numpy,
-                            args=(dataset_info, raw_data, path, True))
-                p.start(); p.join()
+                if not os.path.exists(path):
+                    print(f' [-] converting scene {file}-{i} into {path}')
+                    p = Process(target=convert_raw_to_numpy,
+                                args=(dataset_info, raw_data, path, True))
+                    p.start(); p.join()  # surely this means we are not using parallelism?
+                else:
+                    print(path, 'exists')
             tot += i
 
         print(f' [-] {tot} scenes in the {split} dataset')

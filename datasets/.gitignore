@@ -2,4 +2,5 @@ sample
 cifar_train
 cifar_test
 mazes
+minerl_navigate
 *.pt
