@@ -448,9 +448,9 @@ class TrainLoop:
         sample = th.cat(samples, dim=0)
 
         # visualise the samples -----------------------------------------------
-        tinted = batch.clone()
-        tinted[:, :, :1] = 0   # mutilate observed frames
-        vis = sample*latent_mask + tinted*obs_mask
+        marked_batch = batch.clone()
+        _mark_as_observed(marked_batch)
+        vis = sample*latent_mask + marked_batch*obs_mask
         vis_all = th.zeros_like(orig_batch)
         error = latent_mask * (sample - batch)
         error_all = th.zeros_like(orig_batch)
@@ -471,6 +471,13 @@ class TrainLoop:
         logger.logkv('rmse', rmse.cpu().item())
         self.model.train()
 
+
+def _mark_as_observed(images, color=[1., -1., -1.]):
+    for i, c in enumerate(color):
+        images[..., i, :, 1:2] = c
+        images[..., i, 1:2, :] = c
+        images[..., i, :, -2:-1] = c
+        images[..., i, -2:-1, :] = c
 
 def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
     """Cocatenates a list (or batched tensor) of CxHxW images, with padding in
