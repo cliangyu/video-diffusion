@@ -237,7 +237,7 @@ class MazesDataset:
         path = os.path.join(self.path, "{}.pt".format(idx))
         data = torch.load(path)
         if self.T < len(data):
-            start_i = np.random.randint(len(data) - self.T)
+            start_i = np.random.randint(len(data) - self.T + 1)
             data = data[start_i:start_i+self.T]
         # resizes from 84x84 to 64x64
         byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))

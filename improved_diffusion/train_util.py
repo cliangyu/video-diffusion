@@ -10,6 +10,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 import wandb
 from time import time
+import matplotlib.pyplot as plt
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -432,11 +433,12 @@ class TrainLoop:
         batch, orig_batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask = map(
             repeat, [batch, orig_batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])
         samples = []
+        attns = []
         def chunk(t):
             return th.chunk(t, dim=0, chunks=self.n_valid_batches*self.n_valid_repeats)
         for x0, fi, om, lm, kmm in zip(*map(
                 chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])):
-            samples.append(sample_fn(
+            s, a = sample_fn(
                 self.model,
                 x0.shape,
                 clip_denoised=True,
@@ -446,8 +448,12 @@ class TrainLoop:
                     'latent_mask': lm,
                     'kinda_marg_mask': kmm},
                 latent_mask=lm,
-            ))
+                return_attn_weights=True,
+            )
+            samples.append(s)
+            attns.append(a)
         sample = th.cat(samples, dim=0)
+        attns = {k: th.cat([a[k] for a in attns], dim=0) for k in attns[0].keys()}
 
         # visualise the samples -----------------------------------------------
         marked_batch = batch.clone()
@@ -471,6 +477,36 @@ class TrainLoop:
         logger.log("sampling complete")
         logger.logkv('sampling_time', time()-sample_start)
         logger.logkv('rmse', rmse.cpu().item())
+
+        # visualise the attn weights ------------------------------------------
+        def reshape_attn(attn, to):
+            b, q, k = attn.shape
+            assert q == k
+            d = int((q // self.max_frames)**0.5)
+            attn = attn.view(b, self.max_frames, d, d, self.max_frames, d, d)
+            if to == 'frame':
+                attn = attn.sum(dim=(2, 3, 5, 6)).view(b, self.max_frames, self.max_frames)
+            elif to == 'spatial':
+                frames = list(range(self.max_frames))
+                attn = attn[:, frames, :, :, frames, :, :].sum(dim=0).view(b, d*d, d*d)
+            else:
+                raise NotImplementedError()
+            return attn
+        spatial_attn = {'spatial-'+k: reshape_attn(v, 'spatial') for k, v in attns.items()}
+        frame_attn = {'frame-'+k: reshape_attn(v, 'frame') for k, v in attns.items()}
+        for k, v in spatial_attn.items():
+            logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
+        for k, attn in frame_attn.items():
+            fig, axes = plt.subplots(ncols=len(batch))
+            for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
+                n_frames = attn_matrix.shape[-1]
+                ax.imshow(attn_matrix, vmin=0, cmap='binary_r')
+                for axis, set_ticks, set_labels, set_lim in [('x', ax.set_xticks, ax.set_xticklabels, ax.set_xlim),
+                                                             ('y', ax.set_yticks, ax.set_yticklabels, ax.set_ylim)]:
+                    set_ticks(np.linspace(0, n_frames-1, n_frames))
+                    set_labels(fi if axis == 'x' else fi[::-1])
+                    set_lim(-0.5, n_frames-0.5)
+            logger.logkv(k, fig)
         self.model.train()
 
 
@@ -480,6 +516,7 @@ def _mark_as_observed(images, color=[1., -1., -1.]):
         images[..., i, 1:2, :] = c
         images[..., i, :, -2:-1] = c
         images[..., i, -2:-1, :] = c
+
 
 def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
     """Cocatenates a list (or batched tensor) of CxHxW images, with padding in
