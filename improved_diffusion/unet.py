@@ -33,13 +33,12 @@ class TimestepBlock(nn.Module):
         """
 
 
-class TimestepEmbedAttnMaskSequential(nn.Sequential, TimestepBlock):
+class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
     """
     A sequential module that passes timestep embeddings to the children that
     support it as an extra input.
     """
-
-    def forward(self, x, emb, attn_mask, T=1):
+    def forward(self, x, emb, attn_mask, T=1, attn_weights_list=None):
         for layer in self:
             kwargs = {}
             if isinstance(layer, TimestepBlock):
@@ -47,7 +46,12 @@ class TimestepEmbedAttnMaskSequential(nn.Sequential, TimestepBlock):
             if isinstance(layer, AttentionBlock):
                 kwargs['attn_mask'] = attn_mask
                 kwargs['T'] = T
-            x = layer(x, **kwargs)
+            if isinstance(layer, AttentionBlock):
+                x, layer_attn = layer(x, **kwargs)
+                if attn_weights_list is not None:
+                    attn_weights_list.append(layer_attn.detach().mean(dim=1))
+            else:
+                x = layer(x, **kwargs)
         return x
 
 
@@ -229,9 +233,9 @@ class AttentionBlock(nn.Module):
         x = x.view(B, T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
         if attn_mask is not None:
             attn_mask = attn_mask.view(B, T, 1, 1).expand(B, T, *spatial)
-        out = checkpoint(self._forward, (x, attn_mask),
-                         self.parameters(), self.use_checkpoint)
-        return out.transpose(1, 2).reshape(BT, C, *spatial)
+        out, attn = checkpoint(self._forward, (x, attn_mask),
+                               self.parameters(), self.use_checkpoint)
+        return out.transpose(1, 2).reshape(BT, C, *spatial), attn
 
     def _forward(self, x, attn_mask):
         b, c, *spatial = x.shape
@@ -240,10 +244,11 @@ class AttentionBlock(nn.Module):
         qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
         if attn_mask is not None:
             attn_mask = attn_mask.reshape(b, -1).repeat(self.num_heads, 1)
-        h = self.attention(qkv, attn_mask=attn_mask)
+        h, attn_weights = self.attention(qkv, attn_mask=attn_mask)
+        attn_weights = attn_weights.view(b, self.num_heads, *attn_weights.shape[1:])
         h = h.reshape(b, -1, h.shape[-1])
         h = self.proj_out(h)
-        return (x + h).reshape(b, c, *spatial)
+        return (x + h).reshape(b, c, *spatial), attn_weights
 
 
 class QKVAttention(nn.Module):
@@ -271,7 +276,7 @@ class QKVAttention(nn.Module):
             inf_mask[inf_mask == 1] = th.inf
             weight = weight - inf_mask.view(n, 1, t)
         weight = th.softmax(weight, dim=-1).type(weight.dtype)
-        return th.einsum("bts,bcs->bct", weight, v)
+        return th.einsum("bts,bcs->bct", weight, v), weight
 
     @staticmethod
     def count_flops(model, _x, y):
@@ -370,7 +375,7 @@ class UNetModel(nn.Module):
         self.n_blocks_before_attn = None
         self.input_blocks = nn.ModuleList(
             [
-                TimestepEmbedAttnMaskSequential(
+                TimestepEmbedAttnThingsSequential(
                     conv_nd(dims, in_channels, model_channels, 3, padding=1)
                 )
             ]
@@ -402,11 +407,11 @@ class UNetModel(nn.Module):
                             ch, use_checkpoint=use_checkpoint, num_heads=num_heads,
                         )
                     )
-                self.input_blocks.append(TimestepEmbedAttnMaskSequential(*layers))
+                self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
             if level != len(channel_mult) - 1:
                 self.input_blocks.append(
-                    TimestepEmbedAttnMaskSequential(Downsample(ch, conv_resample, dims=dims))
+                    TimestepEmbedAttnThingsSequential(Downsample(ch, conv_resample, dims=dims))
                 )
                 input_block_chans.append(ch)
                 ds *= 2
@@ -425,7 +430,7 @@ class UNetModel(nn.Module):
         else:
             self.spatial_encoding = None
 
-        self.middle_block = TimestepEmbedAttnMaskSequential(
+        self.middle_block = TimestepEmbedAttnThingsSequential(
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -471,7 +476,7 @@ class UNetModel(nn.Module):
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))
                     ds //= 2
-                self.output_blocks.append(TimestepEmbedAttnMaskSequential(*layers))
+                self.output_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
 
         self.out = nn.Sequential(
             normalization(ch),
@@ -502,7 +507,8 @@ class UNetModel(nn.Module):
         """
         return next(self.input_blocks.parameters()).dtype
 
-    def forward(self, x, timesteps, y=None, attn_mask=None, T=1, **pos_enc_kwargs):
+    def forward(self, x, timesteps, y=None, attn_mask=None, T=1,
+                return_attn_weights=False, **pos_enc_kwargs):
         """
         Apply the model to an input batch.
 
@@ -523,17 +529,19 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.inner_dtype)
+        attns = [] if return_attn_weights else None
         for layer, module in enumerate(self.input_blocks):   # add frame embedding after first input block
-            h = module(h, emb, attn_mask, T=T)
+            h = module(h, emb, attn_mask, T=T, attn_weights_list=attns)
             hs.append(h)
             if layer + 1 == self.n_blocks_before_attn:
                 h = self.add_positional_encodings(h, **pos_enc_kwargs)
-        h = self.middle_block(h, emb, attn_mask, T=T)
+        h = self.middle_block(h, emb, attn_mask, T=T, attn_weights_list=attns)
         for module in self.output_blocks:
             cat_in = th.cat([h, hs.pop()], dim=1)
-            h = module(cat_in, emb, attn_mask, T=T)
+            h = module(cat_in, emb, attn_mask, T=T, attn_weights_list=attns)
         h = h.type(x.dtype)
-        return self.out(h)
+        out = self.out(h)
+        return out, attns
 
     def add_positional_encodings(self, h):
         if self.spatial_encoding is not None:
@@ -589,16 +597,17 @@ class UNetVideoModel(UNetModel):
             *args, **kwargs,
         )
 
-    def forward(self, x, timesteps, frame_indices=None, attn_mask=None):
+    def forward(self, x, timesteps, frame_indices=None, **kwargs):
         B, T, C, H, W = x.shape
         if frame_indices is None:
             frame_indices = th.arange(0, T, device=x.device).view(1, T).expand(B, T)
         x = x.view(B*T, C, H, W)
         timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
-        return super().forward(
-            x, timesteps, frame_indices=frame_indices, attn_mask=attn_mask,
-            T=T if self.cross_frame_attention else 1
-        ).view(B, T, self.out_channels, H, W)
+        out, attn = super().forward(
+            x, timesteps, frame_indices=frame_indices,
+            T=T if self.cross_frame_attention else 1, **kwargs
+        )
+        return out.view(B, T, self.out_channels, H, W), attn
 
     def add_positional_encodings(self, h, frame_indices):
         h = super().add_positional_encodings(h)
@@ -630,8 +639,8 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                     kinda_marg_indicator],
                    dim=2)
         attn_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
-        out = super().forward(x, attn_mask=attn_mask, **kwargs)
-        return out * latent_mask
+        out, attn = super().forward(x, attn_mask=attn_mask, **kwargs)
+        return out*latent_mask, attn
 
 
 class SuperResModel(UNetModel):

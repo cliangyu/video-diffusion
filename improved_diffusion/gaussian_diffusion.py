@@ -230,7 +230,8 @@ class GaussianDiffusion:
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def p_mean_variance(
-        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+            self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None,
+            return_attn_weights=False,
     ):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
@@ -257,7 +258,10 @@ class GaussianDiffusion:
 
         B, C = x.shape[:2]
         assert t.shape == (B,)
-        model_output = model(x, self._scale_timesteps(t), **model_kwargs)
+        model_output, attn_weights = model(
+            x, self._scale_timesteps(t), return_attn_weights=return_attn_weights,
+            **model_kwargs
+        )
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
             assert model_output.shape == (B, C * 2, *x.shape[2:])
@@ -323,6 +327,7 @@ class GaussianDiffusion:
             "variance": model_variance,
             "log_variance": model_log_variance,
             "pred_xstart": pred_xstart,
+            "attn": attn_weights,
         }
 
     def _predict_xstart_from_eps(self, x_t, t, eps):
@@ -354,7 +359,8 @@ class GaussianDiffusion:
         return t
 
     def p_sample(
-        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+            self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None,
+            return_attn_weights=False,
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -378,13 +384,15 @@ class GaussianDiffusion:
             clip_denoised=clip_denoised,
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
+            return_attn_weights=return_attn_weights,
         )
         noise = th.randn_like(x)
         nonzero_mask = (
             (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
         )  # no noise when t == 0
         sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"],
+                "attn": out["attn"], }
 
     def p_sample_loop(
         self,
@@ -397,6 +405,7 @@ class GaussianDiffusion:
         latent_mask=None,
         device=None,
         progress=False,
+        return_attn_weights=False,
     ):
         """
         Generate samples from the model.
@@ -416,7 +425,8 @@ class GaussianDiffusion:
         :return: a non-differentiable batch of samples.
         """
         final = None
-        for sample in self.p_sample_loop_progressive(
+        attns = {}
+        for t, sample in enumerate(self.p_sample_loop_progressive(
             model,
             shape,
             noise=noise,
@@ -426,9 +436,17 @@ class GaussianDiffusion:
             latent_mask=latent_mask,
             device=device,
             progress=progress,
-        ):
+            return_attn_weights=return_attn_weights,
+        )):
+            if return_attn_weights:
+                quartile = (4*t)//self.num_timesteps
+                for layer, attn_l in enumerate(sample["attn"]):
+                    k = f"attn/layer-{layer}_q{quartile}"
+                    if k not in attns:
+                        attns[k] = 0.
+                    attns[k] = attns[k] + attn_l/(self.num_timesteps/4)
             final = sample
-        return final["sample"]
+        return final["sample"], attns
 
     def p_sample_loop_progressive(
         self,
@@ -441,6 +459,7 @@ class GaussianDiffusion:
         latent_mask=None,
         device=None,
         progress=False,
+        return_attn_weights=False,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -475,6 +494,7 @@ class GaussianDiffusion:
                     clip_denoised=clip_denoised,
                     denoised_fn=denoised_fn,
                     model_kwargs=model_kwargs,
+                    return_attn_weights=return_attn_weights,
                 )
                 yield out
                 img = out["sample"]
@@ -711,7 +731,7 @@ class GaussianDiffusion:
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, timesteps=self._scale_timesteps(t), **model_kwargs)
+            model_output, _ = model(x_t, timesteps=self._scale_timesteps(t), **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
