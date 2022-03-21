@@ -618,7 +618,7 @@ class UNetVideoModel(UNetModel):
         assert BT == B*T
         max_period = self.T*10
         if self.enforce_position_invariance:
-            frame_indices = frame_indices + th.randint_like(frame_indices[:, :1], high=max_period)
+            frame_indices = frame_indices - frame_indices.mean(dim=1)
         emb = frame_embedding(frame_indices, C, max_period=max_period)
         return h + emb.view(BT, C, 1, 1)
 
