@@ -498,7 +498,7 @@ class TrainLoop:
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
-            fig = Figure()
+            fig = Figure(figsize=(5, 4.5*len(batch)))
             canvas = FigureCanvas(fig)
             axes = [fig.add_subplot(len(batch), 1, i+1) for i in range(len(batch))]
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
