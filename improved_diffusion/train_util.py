@@ -243,7 +243,7 @@ class TrainLoop:
             batch, cond = next(self.data)
 
             self.run_step(batch, cond)
-            logger.logkv("step_time", time() - t_0)
+            logger.logkv("timing/step_time", time() - t_0)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
@@ -253,7 +253,7 @@ class TrainLoop:
                     return
             if self.sample_interval is not None and self.step != 0 and (self.step % self.sample_interval == 0 or self.step == 5):
                 self.log_samples()
-                logger.logkv('time_between_samples', time()-last_sample_time)
+                logger.logkv('timing/time_between_samples', time()-last_sample_time)
                 last_sample_time = time()
             self.step += 1
             if self.step == 1:
@@ -475,7 +475,7 @@ class TrainLoop:
         gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
         gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
-        logger.logkv('sampling_time', time()-sample_start)
+        logger.logkv('timing/sampling_time', time()-sample_start)
         logger.logkv('rmse', rmse.cpu().item())
 
         # visualise the attn weights ------------------------------------------
