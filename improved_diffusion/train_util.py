@@ -500,7 +500,7 @@ def gather_and_log_videos(name, array, log_as='both'):
     Unnormalises and logs videos given as B x T x C x H x W tensors.
         :`as` can be 'array', 'video', or 'both'
     """
-    array = array.cuda()
+    array = array.to(dist_util.dev())
     array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
     array = array.contiguous()
     gathered_arrays = [th.zeros_like(array) for _ in range(dist.get_world_size())]
