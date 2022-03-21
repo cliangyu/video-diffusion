@@ -10,6 +10,7 @@ from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 import wandb
 from time import time
+import matplotlib.pyplot as plt
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -242,7 +243,7 @@ class TrainLoop:
             batch, cond = next(self.data)
 
             self.run_step(batch, cond)
-            logger.logkv("step_time", time() - t_0)
+            logger.logkv("timing/step_time", time() - t_0)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
@@ -252,7 +253,7 @@ class TrainLoop:
                     return
             if self.sample_interval is not None and self.step != 0 and (self.step % self.sample_interval == 0 or self.step == 5):
                 self.log_samples()
-                logger.logkv('time_between_samples', time()-last_sample_time)
+                logger.logkv('timing/time_between_samples', time()-last_sample_time)
                 last_sample_time = time()
             self.step += 1
             if self.step == 1:
@@ -474,7 +475,7 @@ class TrainLoop:
         gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
         gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
-        logger.logkv('sampling_time', time()-sample_start)
+        logger.logkv('timing/sampling_time', time()-sample_start)
         logger.logkv('rmse', rmse.cpu().item())
 
         # visualise the attn weights ------------------------------------------
@@ -496,7 +497,6 @@ class TrainLoop:
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
-            import matplotlib.pyplot as plt
             fig, axes = plt.subplots(ncols=len(batch))
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
                 n_frames = attn_matrix.shape[-1]
@@ -537,7 +537,7 @@ def gather_and_log_videos(name, array, log_as='both'):
     Unnormalises and logs videos given as B x T x C x H x W tensors.
         :`as` can be 'array', 'video', or 'both'
     """
-    array = array.cuda()
+    array = array.to(dist_util.dev())
     array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
     array = array.contiguous()
     gathered_arrays = [th.zeros_like(array) for _ in range(dist.get_world_size())]
