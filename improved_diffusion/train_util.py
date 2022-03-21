@@ -10,7 +10,8 @@ from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 import wandb
 from time import time
-import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -497,7 +498,9 @@ class TrainLoop:
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
-            fig, axes = plt.subplots(ncols=len(batch))
+            fig = Figure()
+            canvas = FigureCanvas(fig)
+            axes = [fig.add_subplot(len(batch), 1, i+1) for i in range(len(batch))]
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
                 n_frames = attn_matrix.shape[-1]
                 ax.imshow(attn_matrix, vmin=0, cmap='binary_r')
