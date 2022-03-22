@@ -5,7 +5,7 @@ import os
 import io
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision.transforms import ToTensor, Resize
 
 NO_MPI = ('NO_MPI' in os.environ)
@@ -103,6 +103,23 @@ def load_video_data(data_path, batch_size, T, deterministic=False, train=True):
             yield from loader
     else:
         yield from loader
+
+
+def get_test_dataset(data_path, T):
+    if "minerl" in data_path:
+        def _process_seq(seq):
+            seq = tf.expand_dims(seq, 0)
+            seq = tf.cast(seq, tf.float32) / 255.0
+            seq = seq * 2 - 1
+            seq = tf.transpose(seq, [0, 1, 4, 2, 3])
+            return seq
+        dataset = tfds.load('minerl_navigate', shuffle_files=False, data_dir=os.path.dirname(data_path))["test"]
+        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
+            lambda x: tf.data.Dataset.from_tensor_slices(_process_seq(x))
+        )
+        numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
+        dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+    return dataset
 
 
 def _list_image_files_recursively(data_dir):
