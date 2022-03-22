@@ -78,7 +78,7 @@ def load_data(
         yield from loader
 
 
-def load_video_data(dataset_name, batch_size, T, deterministic=False, train=True):
+def load_video_data(dataset_name, batch_size, T, deterministic=False):
     # NOTE this is just for loading training data (not test)
     data_path = video_data_paths_dict[dataset_name]
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
@@ -99,7 +99,7 @@ def load_video_data(dataset_name, batch_size, T, deterministic=False, train=True
             num_shards=num_shards,)
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
-        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T, train=train)
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
         loader = get_loader(dataset)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
@@ -107,9 +107,8 @@ def load_video_data(dataset_name, batch_size, T, deterministic=False, train=True
         loader = get_loader(dataset)
     else:
         raise Exception("no dataset", dataset_name)
-    if train:
-        while True:
-            yield from loader
+    while True:
+        yield from loader
 
 
 def get_test_dataset(data_path, T):
