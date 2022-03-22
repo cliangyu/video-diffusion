@@ -421,8 +421,8 @@ class TrainLoop:
     def log_samples(self):
         sample_start = time()
         self.model.eval()
-        orig_state_dict = self.model.state_dict()
-        self.model.load_state_dict(self._master_params_to_state_dict(self.ema_params[0]))
+        orig_state_dict = copy.deepcopy(self.model.state_dict())
+        self.model.load_state_dict(copy.deepcopy(self._master_params_to_state_dict(self.ema_params[0])))
 
         logger.log("sampling...")
         orig_batch = th.cat(self.valid_batches, dim=0).to(dist_util.dev())
