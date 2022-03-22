@@ -12,6 +12,7 @@ import wandb
 from time import time
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -373,7 +374,8 @@ class TrainLoop:
                 else:
                     filename = f"ema_{rate}_{postfix}.pt"
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save(state_dict, f)
+                    th.save({"state_dict": state_dict,
+                             "config": self._args.__dict__}, f)
 
         save_checkpoint(0, self.master_params)
         for rate, params in zip(self.ema_rate, self.ema_params):
