@@ -421,6 +421,9 @@ class TrainLoop:
     def log_samples(self):
         sample_start = time()
         self.model.eval()
+        orig_state_dict = self.model.state_dict()
+        self.model.load_state_dict(self._master_params_to_state_dict(self.ema_params[0]))
+
         logger.log("sampling...")
         orig_batch = th.cat(self.valid_batches, dim=0).to(dist_util.dev())
         set_masks = self.make_interesting_masks(orig_batch)
@@ -511,6 +514,7 @@ class TrainLoop:
                     set_lim(-0.5, n_frames-0.5)
             logger.logkv(k, fig)
         self.model.train()
+        self.model.load_state_dict(orig_state_dict)
 
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
