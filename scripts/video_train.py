@@ -27,7 +27,6 @@ def main():
 
     dist_util.setup_dist()
     logger.configure(config=args)
-
     logger.log("creating video model and diffusion...")
     model, diffusion = create_video_model_and_diffusion(
         **args_to_dict(args, video_model_and_diffusion_defaults().keys())
@@ -65,6 +64,7 @@ def main():
         n_valid_repeats=args.n_valid_repeats,
         max_frames=args.max_frames,
         T=args.T,
+        args=args,
     ).run_loop()
 
 
@@ -88,6 +88,7 @@ def create_argparser():
         n_valid_batches=1,
         n_valid_repeats=2,
         max_frames=10,
+        save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

@@ -55,7 +55,10 @@ class TrainLoop:
         n_valid_batches=1,
         n_valid_repeats=1,
         max_frames=10,
+        args=None
     ):
+        assert args is not None
+        self._args = args # This is only to be used when saving the model
         self.model = model
         self.diffusion = diffusion
         self.data = data
@@ -359,14 +362,15 @@ class TrainLoop:
             logger.logkv("lg_loss_scale", self.lg_loss_scale)
 
     def save(self):
+        postfix = "latest" if self._args.save_latest_only else f"{(self.step+self.resume_step):06d}"
         def save_checkpoint(rate, params):
             state_dict = self._master_params_to_state_dict(params)
             if dist.get_rank() == 0:
                 logger.log(f"saving model {rate}...")
                 if not rate:
-                    filename = f"model{(self.step+self.resume_step):06d}.pt"
+                    filename = f"model_{postfix}.pt"
                 else:
-                    filename = f"ema_{rate}_{(self.step+self.resume_step):06d}.pt"
+                    filename = f"ema_{rate}_{postfix}.pt"
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
                     th.save(state_dict, f)
 
@@ -376,7 +380,7 @@ class TrainLoop:
 
         if dist.get_rank() == 0:
             with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"opt{(self.step+self.resume_step):06d}.pt"),
+                bf.join(get_blob_logdir(), f"opt_{postfix}.pt"),
                 "wb",
             ) as f:
                 th.save(self.opt.state_dict(), f)
@@ -507,6 +511,7 @@ class TrainLoop:
                     set_labels(fi if axis == 'x' else fi[::-1])
                     set_lim(-0.5, n_frames-0.5)
             logger.logkv(k, fig)
+            plt.close("all")
         self.model.train()
 
 
@@ -577,7 +582,8 @@ def parse_resume_step_from_filename(filename):
 
 
 def get_blob_logdir():
-    return os.environ.get("DIFFUSION_BLOB_LOGDIR", logger.get_dir())
+    root_dir = os.environ.get("DIFFUSION_BLOB_LOGDIR", logger.get_dir())
+    return os.path.join(root_dir, wandb.run.id)
 
 
 def find_resume_checkpoint():
