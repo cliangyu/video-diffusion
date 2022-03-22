@@ -24,6 +24,12 @@ except ModuleNotFoundError:
     print('WARNING: Failed tensorflow import.')
 
 
+video_data_paths_dict = {
+    "minerl":  "datasets/minerl_navigate",
+    "mazes":  "datasets/mazes-torch",
+    "bouncy_balls":  "datasets/bouncing_balls_100",
+}
+
 def load_data(
     *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
 ):
@@ -72,7 +78,9 @@ def load_data(
         yield from loader
 
 
-def load_video_data(data_path, batch_size, T, deterministic=False, train=True):
+def load_video_data(dataset_name, batch_size, T, deterministic=False, train=True):
+    # NOTE this is just for loading training data (not test)
+    data_path = video_data_paths_dict[dataset_name]
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
@@ -81,7 +89,7 @@ def load_video_data(data_path, batch_size, T, deterministic=False, train=True):
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=1, drop_last=True
         )
-    if "minerl" in data_path:
+    if dataset_name == "minerl":
         loader = MineRLDataLoader(
             data_path, batch_size,
             seq_len=T,
@@ -89,20 +97,19 @@ def load_video_data(data_path, batch_size, T, deterministic=False, train=True):
             deterministic=deterministic,
             shard=shard,
             num_shards=num_shards,)
-    elif "mazes" in data_path:
-        print('init mazes dataset')
+    elif dataset_name == "mazes":
+        data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T, train=train)
-        print('initted mazes dataset')
         loader = get_loader(dataset)
-        print('initted mazes loader')
-    else:
+    elif dataset_name == "bouncy_balls":
+        data_path = os.path.join(data_path, "train.pt")
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
         loader = get_loader(dataset)
+    else:
+        raise Exception("no dataset", dataset_name)
     if train:
         while True:
             yield from loader
-    else:
-        yield from loader
 
 
 def get_test_dataset(data_path, T):

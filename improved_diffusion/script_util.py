@@ -38,7 +38,7 @@ def model_and_diffusion_defaults():
 
 def video_model_and_diffusion_defaults():
     defaults = model_and_diffusion_defaults()
-    defaults['T'] = 100
+    defaults['T'] = -1
     defaults['use_spatial_encoding'] = True
     defaults['use_frame_encoding'] = True
     defaults['cross_frame_attention'] = True

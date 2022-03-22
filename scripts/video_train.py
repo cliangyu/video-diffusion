@@ -25,6 +25,19 @@ if "--unobserve" in sys.argv:
 def main():
     args = create_argparser().parse_args()
 
+    default_T = {
+        "minerl": 500,
+        "mazes": 300,
+        "bouncy_balls": 100,
+    }[args.dataset]
+    default_image_size = {
+        "minerl": 64,
+        "mazes": 64,
+        "bouncy_balls": 32,
+    }[args.dataset]
+    args.T = default_T if args.T == -1 else args.T
+    args.image_size = default_image_size
+
     dist_util.setup_dist()
     logger.configure(config=args)
     logger.log("creating video model and diffusion...")
@@ -36,7 +49,7 @@ def main():
 
     logger.log("creating data loader...")
     data = load_video_data(
-        data_path=args.data_path,
+        dataset_name=args.dataset,
         batch_size=args.batch_size,
         T=args.T
     )
@@ -70,7 +83,7 @@ def main():
 
 def create_argparser():
     defaults = dict(
-        data_path="",
+        dataset="",
         schedule_sampler="uniform",
         lr=1e-4,
         weight_decay=0.0,
@@ -79,7 +92,7 @@ def create_argparser():
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
-        sample_interval=5000,  # TODO increase
+        sample_interval=50000,
         save_interval=10000,
         resume_checkpoint="",
         use_fp16=False,
