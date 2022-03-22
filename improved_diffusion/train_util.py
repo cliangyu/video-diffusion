@@ -375,7 +375,8 @@ class TrainLoop:
                     filename = f"ema_{rate}_{postfix}.pt"
                 with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
                     th.save({"state_dict": state_dict,
-                             "config": self._args.__dict__}, f)
+                             "config": self._args.__dict__,
+			     "step": self.step + self.resume_step}, f)
 
         save_checkpoint(0, self.master_params)
         for rate, params in zip(self.ema_rate, self.ema_params):
