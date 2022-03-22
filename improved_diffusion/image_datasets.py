@@ -72,7 +72,7 @@ def load_data(
         yield from loader
 
 
-def load_video_data(data_path, batch_size, T, deterministic=False):
+def load_video_data(data_path, batch_size, T, deterministic=False, train=True):
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
@@ -91,14 +91,17 @@ def load_video_data(data_path, batch_size, T, deterministic=False):
             num_shards=num_shards,)
     elif "mazes" in data_path:
         print('init mazes dataset')
-        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
+        dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T, train=train)
         print('initted mazes dataset')
         loader = get_loader(dataset)
         print('initted mazes loader')
     else:
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
         loader = get_loader(dataset)
-    while True:
+    if train:
+        while True:
+            yield from loader
+    else:
         yield from loader
 
 
