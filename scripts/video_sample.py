@@ -96,5 +96,5 @@ if __name__ == "__main__":
         recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
         recon = recon.astype(np.uint8)
         for i in range(len(recon)):
-            np.save(recon[i], os.path.join(args.out_dir, f"sample_{cnt + i:03d}.npy"))
+            np.save(os.path.join(args.out_dir, f"sample_{cnt + i:03d}.npy"), recon[i])
         cnt += len(recon)
