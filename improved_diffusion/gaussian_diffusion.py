@@ -433,7 +433,7 @@ class GaussianDiffusion:
         """
         final = None
         attns = {}
-        for t, sample in enumerate(self.p_sample_loop_progressive(
+        for neg_t, sample in enumerate(self.p_sample_loop_progressive(
             model,
             shape,
             noise=noise,
@@ -446,6 +446,7 @@ class GaussianDiffusion:
             return_attn_weights=return_attn_weights,
         )):
             if return_attn_weights:
+                t = self.num_timesteps - neg_t
                 quartile = (4*t)//self.num_timesteps
                 for layer, attn_l in enumerate(sample["attn"]):
                     k = f"attn/layer-{layer}_q{quartile}"

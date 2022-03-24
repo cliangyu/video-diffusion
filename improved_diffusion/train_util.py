@@ -2,6 +2,8 @@ import copy
 import functools
 import os
 
+import shutil
+import glob
 import blobfile as bf
 import numpy as np
 import torch as th
@@ -24,7 +26,7 @@ from .fp16_util import (
 )
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
-from .rng_util import rng_decorator
+from .rng_util import RNG, rng_decorator
 
 # For ImageNet experiments, this was a good default value.
 # We found that the lg_loss_scale quickly climbed to
@@ -78,7 +80,8 @@ class TrainLoop:
         self.log_interval = log_interval
         self.sample_interval = sample_interval
         self.save_interval = save_interval
-        self.resume_checkpoint = resume_checkpoint
+        self.resume_checkpoint = resume_checkpoint if resume_checkpoint else find_resume_checkpoint()
+        print(self.resume_checkpoint)
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
         self.schedule_sampler = schedule_sampler or UniformSampler(diffusion)
@@ -86,7 +89,6 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
 
         self.step = 0
-        self.resume_step = 0
         self.global_batch = self.batch_size * dist.get_world_size()
 
         self.model_params = list(self.model.parameters())
@@ -99,7 +101,7 @@ class TrainLoop:
             self._setup_fp16()
 
         self.opt = AdamW(self.master_params, lr=self.lr, weight_decay=self.weight_decay)
-        if self.resume_step:
+        if self.resume_checkpoint:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
             # being specified at the command line.
@@ -131,20 +133,22 @@ class TrainLoop:
             self.ddp_model = self.model
         self.n_valid_batches = n_valid_batches
         self.n_valid_repeats = n_valid_repeats
-        self.valid_batches = [next(self.data)[0][:self.microbatch]
-                              for i in range(self.n_valid_batches)]
+        with RNG(0):
+            self.valid_batches = [next(self.data)[0][:self.microbatch]
+                                  for i in range(self.n_valid_batches)]
 
     def _load_and_sync_parameters(self):
-        resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        resume_checkpoint = self.resume_checkpoint
 
         if resume_checkpoint:
-            self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
             if dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
+                state_dict = dist_util.load_state_dict(
+                    resume_checkpoint, map_location=dist_util.dev()
+                )
+                self.step = state_dict["step"]
                 self.model.load_state_dict(
-                    dist_util.load_state_dict(
-                        resume_checkpoint, map_location=dist_util.dev()
-                    )
+                    state_dict["state_dict"]
                 )
 
         dist_util.sync_params(self.model.parameters())
@@ -152,23 +156,28 @@ class TrainLoop:
     def _load_ema_parameters(self, rate):
         ema_params = copy.deepcopy(self.master_params)
 
-        main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
-        ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
+        main_checkpoint = self.resume_checkpoint
+        ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.step, rate,
+                                             save_latest_only=self._args.save_latest_only)
         if ema_checkpoint:
             if dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
                     ema_checkpoint, map_location=dist_util.dev()
                 )
-                ema_params = self._state_dict_to_master_params(state_dict)
+                ema_params = self._state_dict_to_master_params(state_dict['state_dict'])
+        else:
+            print(f"Failed to find EMA checkpoint for rate {rate} and main checkpoint {main_checkpoint}.")
+            raise Exception
 
         dist_util.sync_params(ema_params)
         return ema_params
 
     def _load_optimizer_state(self):
-        main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+        main_checkpoint = self.resume_checkpoint
+        filename = "opt_latest.pt" if self._args.save_latest_only else f"opt_{(self.step):06d}.pt"
         opt_checkpoint = bf.join(
-            bf.dirname(main_checkpoint), f"opt{self.resume_step:06}.pt"
+            bf.dirname(main_checkpoint), filename
         )
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
@@ -176,6 +185,9 @@ class TrainLoop:
                 opt_checkpoint, map_location=dist_util.dev()
             )
             self.opt.load_state_dict(state_dict)
+        else:
+            print(f"Failed to find optimizer checkpoint {opt_checkpoint}.")
+            raise Exception
 
     def _setup_fp16(self):
         self.master_params = make_master_params(self.model_params)
@@ -241,8 +253,9 @@ class TrainLoop:
         last_sample_time = time()
         while (
             not self.lr_anneal_steps
-            or self.step + self.resume_step < self.lr_anneal_steps
+            or self.step < self.lr_anneal_steps
         ):
+            print(self.step)
 
             t_0 = time()
             batch, cond = next(self.data)
@@ -352,42 +365,43 @@ class TrainLoop:
     def _anneal_lr(self):
         if not self.lr_anneal_steps:
             return
-        frac_done = (self.step + self.resume_step) / self.lr_anneal_steps
+        frac_done = (self.step) / self.lr_anneal_steps
         lr = self.lr * (1 - frac_done)
         for param_group in self.opt.param_groups:
             param_group["lr"] = lr
 
     def log_step(self):
-        logger.logkv("step", self.step + self.resume_step)
-        logger.logkv("samples", (self.step + self.resume_step + 1) * self.global_batch)
+        logger.logkv("step", self.step)
+        logger.logkv("samples", (self.step + 1) * self.global_batch)
         if self.use_fp16:
             logger.logkv("lg_loss_scale", self.lg_loss_scale)
 
     def save(self):
-        postfix = "latest" if self._args.save_latest_only else f"{(self.step+self.resume_step):06d}"
-        def save_checkpoint(rate, params):
-            state_dict = self._master_params_to_state_dict(params)
-            if dist.get_rank() == 0:
-                logger.log(f"saving model {rate}...")
-                if not rate:
-                    filename = f"model_{postfix}.pt"
-                else:
-                    filename = f"ema_{rate}_{postfix}.pt"
-                with bf.BlobFile(bf.join(get_blob_logdir(), filename), "wb") as f:
-                    th.save({"state_dict": state_dict,
-                             "config": self._args.__dict__,
-                             "step": self.step + self.resume_step}, f)
-
-        save_checkpoint(0, self.master_params)
-        for rate, params in zip(self.ema_rate, self.ema_params):
-            save_checkpoint(rate, params)
+        postfix = "latest" if self._args.save_latest_only else f"{(self.step):06d}"
+        to_save = {bf.join(get_blob_logdir(), f"opt_{postfix}.pt"): self.opt.state_dict()}
+        for rate, params in zip([0, *self.ema_rate],
+                                [self.master_params, *self.ema_params]):
+            filename = f"ema_{rate}_{postfix}.pt" if rate else f"model_{postfix}.pt"
+            filepath = bf.join(get_blob_logdir(), filename)
+            to_save[filepath] = {
+                "state_dict": self._master_params_to_state_dict(params),
+                "config": self._args.__dict__,
+                "step": self.step
+            }
 
         if dist.get_rank() == 0:
-            with bf.BlobFile(
-                bf.join(get_blob_logdir(), f"opt_{postfix}.pt"),
-                "wb",
-            ) as f:
-                th.save(self.opt.state_dict(), f)
+            for path in to_save:
+                # backup previous
+                if os.path.exists(path) and self._args.save_latest_only:
+                    shutil.copy(path, path+'-backup')
+            for path, params in to_save.items():
+                with bf.BlobFile(path, "wb") as f:
+                    th.save(params, f)
+            for path in to_save:
+                # delete backup
+                backup_path = path+'-backup'
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
 
         dist.barrier()
 
@@ -592,20 +606,39 @@ def parse_resume_step_from_filename(filename):
 
 
 def get_blob_logdir():
-    root_dir = os.environ.get("DIFFUSION_BLOB_LOGDIR", logger.get_dir())
+    root_dir = os.environ.get("DIFFUSION_BLOB_LOGDIR", "checkpoints")
+    assert os.path.exists(root_dir), "Must create directory 'checkpoints' or specify existing DIFFUSION_BLOB_LOGDIR"
     return os.path.join(root_dir, wandb.run.id)
 
 
 def find_resume_checkpoint():
-    # On your infrastructure, you may want to override this to automatically
-    # discover the latest checkpoint on your blob storage, etc.
-    return None
+    """
+    If there are checkpoints saved in get_blob_logdir(), will return the latest one
+    """
+    logdir = get_blob_logdir()
+    print('looking in', logdir)
+    if not os.path.exists(logdir):
+        return
+    logpath = os.path.join(logdir, 'model_latest.pt')
+    if os.path.exists(logpath):
+        return logpath
+    else:
+        logpaths = glob.glob(os.path.join(get_blob_logdir(), 'model_*.pt'))
+        latest_step = -1
+        logpath = None
+        for d in logpaths:
+            step = int(os.path.splitext(d)[0].split('_')[-1])
+            if step > latest_step:
+                latest_step = step
+                logpath = d
+        if logpath is not None:
+            return logpath
 
 
-def find_ema_checkpoint(main_checkpoint, step, rate):
+def find_ema_checkpoint(main_checkpoint, step, rate, save_latest_only):
     if main_checkpoint is None:
         return None
-    filename = f"ema_{rate}_{(step):06d}.pt"
+    filename = f"ema_{rate}_latest.pt" if save_latest_only else f"ema_{rate}_{(step):06d}.pt"
     path = bf.join(bf.dirname(main_checkpoint), filename)
     if bf.exists(path):
         return path
@@ -619,7 +652,3 @@ def log_loss_dict(diffusion, ts, losses):
         for sub_t, sub_loss in zip(ts.cpu().numpy(), values.detach().cpu().numpy()):
             quartile = int(4 * sub_t / diffusion.num_timesteps)
             logger.logkv_mean(f"{key}_q{quartile}", sub_loss)
-
-# def inclusice_randint(l, h=None):
-#     low, high = (0, l) if h is None else (l, h)
-#     return low if low == high else np.random.randint(low, high+1)
