@@ -30,6 +30,18 @@ video_data_paths_dict = {
     "bouncy_balls":  "datasets/bouncing_balls_100",
 }
 
+default_T_dict = {
+    "minerl": 500,
+    "mazes": 300,
+    "bouncy_balls": 100,
+}
+
+default_image_size_dict = {
+    "minerl": 64,
+    "mazes": 64,
+    "bouncy_balls": 32,
+}
+
 def load_data(
     *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
 ):
@@ -78,9 +90,12 @@ def load_data(
         yield from loader
 
 
-def load_video_data(dataset_name, batch_size, T, deterministic=False):
+def load_video_data(dataset_name, batch_size, T=None, image_size=None, deterministic=False):
     # NOTE this is just for loading training data (not test)
     data_path = video_data_paths_dict[dataset_name]
+    T = default_T_dict[dataset_name] if T is None else T
+    image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
+
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
@@ -111,8 +126,12 @@ def load_video_data(dataset_name, batch_size, T, deterministic=False):
         yield from loader
 
 
-def get_test_dataset(data_path, T):
-    if "minerl" in data_path:
+def get_test_dataset(dataset_name, T=None, image_size=None):
+    data_path = video_data_paths_dict[dataset_name]
+    T = default_T_dict[dataset_name] if T is None else T
+    image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
+
+    if dataset_name == "minerl":
         def _process_seq(seq):
             seq = tf.expand_dims(seq, 0)
             seq = tf.cast(seq, tf.float32) / 255.0
@@ -125,6 +144,8 @@ def get_test_dataset(data_path, T):
         )
         numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
         dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+    else:
+        raise Exception("no dataset", dataset_name)
     return dataset
 
 

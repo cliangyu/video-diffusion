@@ -6,7 +6,7 @@ import argparse
 import os, sys
 
 from improved_diffusion import dist_util, logger
-from improved_diffusion.image_datasets import load_video_data
+from improved_diffusion.image_datasets import load_video_data, default_T_dict, default_image_size_dict
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
     video_model_and_diffusion_defaults,
@@ -25,16 +25,8 @@ if "--unobserve" in sys.argv:
 def main():
     args = create_argparser().parse_args()
 
-    default_T = {
-        "minerl": 500,
-        "mazes": 300,
-        "bouncy_balls": 100,
-    }[args.dataset]
-    default_image_size = {
-        "minerl": 64,
-        "mazes": 64,
-        "bouncy_balls": 32,
-    }[args.dataset]
+    default_T = default_T_dict[args.dataset]
+    default_image_size = default_image_size_dict[args.dataset]
     args.T = default_T if args.T == -1 else args.T
     args.image_size = default_image_size
 
