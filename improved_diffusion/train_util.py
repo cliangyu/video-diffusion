@@ -14,7 +14,6 @@ import wandb
 from time import time
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.pyplot as plt
 
 from . import dist_util, logger
 from .fp16_util import (
@@ -531,11 +530,10 @@ class TrainLoop:
                 ax.imshow(attn_matrix, vmin=0, cmap='binary_r')
                 for axis, set_ticks, set_labels, set_lim in [('x', ax.set_xticks, ax.set_xticklabels, ax.set_xlim),
                                                              ('y', ax.set_yticks, ax.set_yticklabels, ax.set_ylim)]:
-                    set_ticks(np.linspace(0, n_frames-1, n_frames))
-                    set_labels(fi if axis == 'x' else fi[::-1])
+                    #set_ticks(np.linspace(0, n_frames-1, n_frames))
+                    #set_labels(fi if axis == 'x' else fi[::-1])
                     set_lim(-0.5, n_frames-0.5)
             logger.logkv(k, fig)
-            plt.close("all")
         self.model.train()
         self.model.load_state_dict(orig_state_dict)
 
