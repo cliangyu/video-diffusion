@@ -127,7 +127,6 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length, assert_fits_gp
         # Move tensors to the correct device
         [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
         # Run the network
-        print(f"Model input batch size (to double check): {len(x0)}")
         local_samples, attention_map = diffusion.p_sample_loop(
             model, x0.shape, clip_denoised=True,
             model_kwargs=dict(frame_indices=frame_indices,
@@ -180,6 +179,7 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
     frame_indices_base = torch.cat([obs_frame_indices, latent_frame_indices], dim=0).repeat((1, 1))
     # Prepare masks
     obs_mask_base, latent_mask_base, kinda_marg_mask_base = get_masks(x0_base, len(obs_frame_indices))
+    sm = 0
     for B in range(1, 1000):
         # Fix the shapes
         x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices = [xyz.repeat_interleave(B, dim=0)
@@ -187,7 +187,9 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
         # Move tensors to the correct device
         [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device)
             for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
+        x0 = torch.randn_like(x0)
         # Run the network
+        print(f"Model input batch size (to double check): {len(x0)}")
         t_0 = time.time()
         local_samples, attention_map = diffusion.p_sample_loop(
             model, x0.shape, clip_denoised=True,
@@ -206,6 +208,7 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
         print(f"Took {time.time() - t_0:.2f}s.")
         print(f"GPU usage: {gpu_mem_info['used']:,.2f} / {gpu_mem_info['total']:,.2f} = {gpu_mem_info['used'] / gpu_mem_info['total'] * 100:.2f}%")
         print("#" * 20)
+        sm += local_samples.sum().item() # Don't know if Python might optimize the code at runtime and ignore local_samples. This bit avoid the potnetial optimization.
 
 
 def main(args, model, diffusion, dataloader):
