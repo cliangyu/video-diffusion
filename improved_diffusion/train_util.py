@@ -206,7 +206,7 @@ class TrainLoop:
             print('warning: sampled indices', [int(pos+i*scale) for i in range(s)], 'trying again')
             return self.sample_some_indices(max_indices, T)
 
-    def sample_all_masks(self, batch, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
+    def sample_all_masks(self, batch, gather=True, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
         p_observed_latent_marg = th.tensor([0.33, 0.33, 0.33] if self.do_inefficient_marg else [0.5, 0.5, 0])
         N = self.max_frames
         B, T, *_ = batch.shape
@@ -228,6 +228,8 @@ class TrainLoop:
                 n_set = min(len(set_values), len(masks[k]))
                 masks[k][:n_set] = set_values[:n_set]
         represented_mask = (masks['obs'] + masks['latent'] + masks['kinda_marg']).clip(max=1)
+        if not gather:
+            return batch, masks['obs'], masks['latent'], masks['kinda_marg']
         represented_mask, (batch, obs_mask, latent_mask, kinda_marg_mask), frame_indices =\
             self.gather_unmasked_elements(
                 represented_mask, (batch, masks['obs'], masks['latent'], masks['kinda_marg'])
@@ -255,7 +257,6 @@ class TrainLoop:
             not self.lr_anneal_steps
             or self.step < self.lr_anneal_steps
         ):
-            print(self.step)
 
             t_0 = time()
             batch, cond = next(self.data)
@@ -538,6 +539,17 @@ class TrainLoop:
         self.model.train()
         self.model.load_state_dict(orig_state_dict)
 
+    def visualise(self):
+        batch = th.cat(self.valid_batches)
+        batch, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(batch, gather=False)
+        vis = -1 + th.zeros_like(batch)
+        vis[obs_mask.expand_as(batch) == 1] = batch[obs_mask.expand_as(batch) == 1]
+        for quartile in [0, 1, 2, 3]:
+            t = th.tensor(self.diffusion.num_timesteps * ((1+quartile)/4) - 1).int()
+            xt = self.diffusion.q_sample(batch, t=t)
+            vis[latent_mask.expand_as(batch) == 1] = xt[latent_mask.expand_as(batch) == 1]
+            gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array')
+        logger.dumpkvs()
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
     for i, c in enumerate(color):

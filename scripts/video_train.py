@@ -59,7 +59,7 @@ def main():
     )
 
     logger.log("training...")
-    TrainLoop(
+    train_loop = TrainLoop(
         model=model,
         diffusion=diffusion,
         data=data,
@@ -82,7 +82,11 @@ def main():
         max_frames=args.max_frames,
         T=args.T,
         args=args,
-    ).run_loop()
+    )
+    if args.just_visualise:
+        train_loop.visualise()
+        exit()
+    train_loop.run_loop()
 
 
 def create_argparser():
@@ -107,6 +111,7 @@ def create_argparser():
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
+        just_visualise=False,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
