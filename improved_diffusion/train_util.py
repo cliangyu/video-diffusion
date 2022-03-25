@@ -542,13 +542,14 @@ class TrainLoop:
     def visualise(self):
         batch = th.cat(self.valid_batches)
         batch, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(batch, gather=False)
-        vis = -1 + th.zeros_like(batch)
+        vis = th.ones_like(batch)
         vis[obs_mask.expand_as(batch) == 1] = batch[obs_mask.expand_as(batch) == 1]
         for quartile in [0, 1, 2, 3]:
             t = th.tensor(self.diffusion.num_timesteps * ((1+quartile)/4) - 1).int()
             xt = self.diffusion.q_sample(batch, t=t)
             vis[latent_mask.expand_as(batch) == 1] = xt[latent_mask.expand_as(batch) == 1]
-            gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array')
+            gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array',
+                                  pad_dim=4, pad_val=0, pad_ends=True)
         logger.dumpkvs()
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
@@ -559,7 +560,8 @@ def _mark_as_observed(images, color=[1., -1., -1.]):
         images[..., i, -2:-1, :] = c
 
 
-def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
+def concat_images_with_padding(images, horizontal=True,
+                               pad_dim=1, pad_val=0, pad_ends=False):
     """Cocatenates a list (or batched tensor) of CxHxW images, with padding in
     between, for pretty viewing.
     """
@@ -569,11 +571,13 @@ def concat_images_with_padding(images, horizontal=True, pad_dim=1, pad_val=0):
     images_with_padding = []
     for image in images:
         images_with_padding.extend([image, padding])
+    if pad_ends:
+        images_with_padding = [padding, *images_with_padding, padding]
     images_with_padding = images_with_padding[:-1]   # remove final pad
     return th.cat(images_with_padding, dim=2 if horizontal else 1)
 
 
-def gather_and_log_videos(name, array, log_as='both'):
+def gather_and_log_videos(name, array, log_as='both', pad_dim=1, pad_val=255, pad_ends=False):
     """
     Unnormalises and logs videos given as B x T x C x H x W tensors.
         :`as` can be 'array', 'video', or 'both'
@@ -589,8 +593,8 @@ def gather_and_log_videos(name, array, log_as='both'):
     if log_as in ['array', 'both']:
         # log all videos/frames as one single image array
         img = concat_images_with_padding(
-            [concat_images_with_padding(vid, horizontal=True, pad_dim=1, pad_val=255) for vid in videos],
-            horizontal=False, pad_dim=2, pad_val=255
+            [concat_images_with_padding(vid, horizontal=True, pad_dim=pad_dim, pad_val=pad_val, pad_ends=pad_ends) for vid in videos],
+            horizontal=False, pad_dim=pad_dim, pad_val=pad_val, pad_ends=pad_ends,
         )
         img = img.permute(1, 2, 0).numpy()
         logger.logkv(name+'array', wandb.Image(img))
