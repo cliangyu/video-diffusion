@@ -18,42 +18,11 @@ from improved_diffusion.image_datasets import get_test_dataset
 
 
 @torch.no_grad()
-def infer_video_simple_autoreg(model, model_args, batch, max_T, obs_length):
-    batch_size = len(batch)
-    x0 = batch[:, :max_T].to(args.device)
-    samples = [x0[:, :obs_length].cpu().numpy()]
-    for i in tqdm(range(0, model_args.T, max_T - obs_length)):
-        frame_indices = torch.arange(i, i + min(max_T, model_args.T - i)).repeat((batch_size, 1)).to(x0.device)
-        x0 = x0[:, :frame_indices.shape[1]]
-        obs_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
-        obs_mask[:, :obs_length] = 1
-        latent_mask = 1 - obs_mask
-        kinda_marg_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
-        # Condition on the first 3 masks, generate the rest autoregressively.
-        local_samples, attention_map = diffusion.p_sample_loop(
-            model, x0.shape, clip_denoised=True,
-            model_kwargs=dict(frame_indices=frame_indices,
-                            x0=x0,
-                            obs_mask=obs_mask,
-                            latent_mask=latent_mask,
-                            kinda_marg_mask=kinda_marg_mask),
-            latent_mask=latent_mask,
-            return_attn_weights=True)
-        # Overwrite the observed part from the input video.
-        local_samples[obs_mask.squeeze().bool()] = x0[obs_mask.squeeze().bool()]
-        samples.append(local_samples[:, obs_length:].cpu().numpy())
-        # Replace the first part of x (which we will condition on in the next iteration)
-        # The rest of x0 is ignored
-        x0[:, :obs_length] = local_samples[:, -obs_length:]
-    return np.concatenate(samples, axis=1)
-
-
-@torch.no_grad()
 def get_indices_simple_autoreg(cur_idx, n=1):
     """
     n (int, optional): How many frames to generate. Defaults to 1.
     """
-    distances_past = torch.arange(n, 10)
+    distances_past = torch.arange(n, cur_idx+1)
     obs_frame_indices = (cur_idx - distances_past)
     latent_frame_indices = cur_idx - torch.arange(0, n)
     return obs_frame_indices, latent_frame_indices
@@ -215,7 +184,8 @@ def main(args, model, diffusion, dataloader):
     # Prepare the indices
     if args.indices is None:
         if "SLURM_ARRAY_TASK_ID" in os.environ:
-            args.indices = int(os.environ["SLURM_ARRAY_TASK_ID"])
+            task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
+            args.indices = list(range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
         else:
             args.indices = list(range(len(dataset)))
     # Create the output directory (if does not exist)
