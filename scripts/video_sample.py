@@ -214,7 +214,10 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
 def main(args, model, diffusion, dataloader):
     # Prepare the indices
     if args.indices is None:
-        args.indices = list(range(len(dataset)))
+        if "SLURM_ARRAY_TASK_ID" in os.environ:
+            args.indices = int(os.environ["SLURM_ARRAY_TASK_ID"])
+        else:
+            args.indices = list(range(len(dataset)))
     # Create the output directory (if does not exist)
     model_step = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")["step"]
     if args.out_dir is None:
@@ -289,6 +292,7 @@ if __name__ == "__main__":
     # Load the test set
     dataset = get_test_dataset("minerl")#(dataset_name=model_args.dataset) # TODO: fix
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+    print(f"Dataset size = {len(dataset)}")
     if args.dryrun_gpu_memory:
         dryrun_gpu_memory(args, model, diffusion, dataloader)
     else:
