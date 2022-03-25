@@ -194,7 +194,7 @@ def main(args, model, diffusion, dataloader):
         args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{Path(args.checkpoint_path).stem}_{model_step}")
     else:
         args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / args.inference_mode
+    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_T}"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
 
