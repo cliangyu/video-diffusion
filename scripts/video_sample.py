@@ -38,6 +38,12 @@ def get_indices_exp_past(cur_idx, T, step_size=1):
     latent_frame_indices = torch.tensor([cur_idx]).type(obs_frame_indices.type())
     return obs_frame_indices, latent_frame_indices
 
+@torch.no_grad()
+def get_indices_independent(cur_idx, T, obs_length, step_size=1):
+    obs_frame_indices = obs_length - torch.arange(1, obs_length+1)
+    latent_frame_indices = cur_idx + torch.arange(0, min(step_size, T - cur_idx))
+    return obs_frame_indices, latent_frame_indices
+
 
 def get_masks(x0, num_obs):
     """ Generates observation, latent, and kinda-marginal masks.
@@ -79,7 +85,8 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
     elif mode == "multi-granuality":
         raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
     elif mode == "independent":
-        raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
+        get_indices = get_indices_independent
+        get_indices_kwargs = dict(obs_length=obs_length)
     else:
         raise NotImplementedError(f"Inference mode {mode} is invalid.")
 
@@ -134,7 +141,8 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
     elif mode == "multi-granuality":
         raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
     elif mode == "independent":
-        raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
+        get_indices = get_indices_independent
+        get_indices_kwargs = {}
     else:
         raise NotImplementedError(f"Inference mode {mode} is invalid.")
 
@@ -233,7 +241,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--inference_mode", required=True,
-                        choices=["naive", "simple-autoreg", "exp-past", "multi-granuality", "independent"])
+                        choices=["simple-autoreg", "exp-past", "multi-granuality", "independent"])
     # Inference arguments
     parser.add_argument("--max_T", type=int, default=10,
                         help="Maximum length of the sequence that fits in the GPU memory.")
