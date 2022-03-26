@@ -456,7 +456,8 @@ class GaussianDiffusion:
                 for attn_layer in attn_t:
                     # scale up to match size of largest layer
                     reshaped = th.nn.functional.interpolate(
-                        attn_layer.unsqueeze(0).unsqueeze(0), size=largest_attn_shape
+                        attn_layer.unsqueeze(0).unsqueeze(0), size=largest_attn_shape,
+                        mode='nearest',
                     ).squeeze(0).squeeze(0)
                     reshaped = reshaped / reshaped.mean() * attn_layer.mean()  # renormalise
                     attns[k] = attns[k] + reshaped/(self.num_timesteps/4)
