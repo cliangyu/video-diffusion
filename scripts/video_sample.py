@@ -1,3 +1,4 @@
+from ast import parse
 from shutil import move
 import torch
 import numpy as np
@@ -18,18 +19,20 @@ from improved_diffusion.image_datasets import get_test_dataset
 
 
 @torch.no_grad()
-def get_indices_simple_autoreg(cur_idx, n=1):
+def get_indices_simple_autoreg(cur_idx, T, step_size=1):
     """
-    n (int, optional): How many frames to generate. Defaults to 1.
+    step_size (int, optional): How many frames to generate. Defaults to 1.
     """
-    distances_past = torch.arange(n, cur_idx+1)
+    distances_past = torch.arange(1, cur_idx+1)
     obs_frame_indices = (cur_idx - distances_past)
-    latent_frame_indices = cur_idx - torch.arange(0, n)
+    latent_frame_indices = cur_idx + torch.arange(0, min(step_size, T - cur_idx))
     return obs_frame_indices, latent_frame_indices
 
 
 @torch.no_grad()
-def get_indices_exp_past(cur_idx):
+def get_indices_exp_past(cur_idx, T, step_size=1):
+    if step_size != 1:
+        raise NotImplementedError("step_size != 1 not implemented")
     distances_past = 2**torch.arange(int(np.log2(cur_idx))) # distances from the observed frames (all in the past)
     obs_frame_indices = (cur_idx - distances_past)
     latent_frame_indices = torch.tensor([cur_idx]).type(obs_frame_indices.type())
@@ -56,7 +59,8 @@ def get_masks(x0, num_obs):
 
 
 @torch.no_grad()
-def infer_video(mode, model, diffusion, batch, max_T, obs_length, assert_fits_gpu=True):
+def infer_video(mode, model, diffusion, batch, max_T, obs_length,
+                step_size=1, assert_fits_gpu=True):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -68,7 +72,7 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length, assert_fits_gp
     samples[:, :obs_length] = batch[:, :obs_length]
     if mode == "simple-autoreg":
         get_indices = get_indices_simple_autoreg
-        get_indices_kwargs = dict(n=1)
+        get_indices_kwargs = {}
     elif mode == "exp-past":
         get_indices = get_indices_exp_past
         get_indices_kwargs = {}
@@ -79,15 +83,15 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length, assert_fits_gp
     else:
         raise NotImplementedError(f"Inference mode {mode} is invalid.")
 
-    for i in tqdm(range(obs_length, T)):
+    for i in tqdm(range(obs_length, T, step_size)):
         # Prepare frame indices
-        obs_frame_indices, latent_frame_indices = get_indices(i, **get_indices_kwargs)
-        if len(obs_frame_indices) > max_T - 1:
-            print(f"**WARNING**: Dropping {len(obs_frame_indices) - max_T + 1} of the observed frames because they don't fir in the GPU memory.")
-            obs_frame_indices = obs_frame_indices[:max_T-1] # drops the last frames, if not fitting in the GPU memory.
+        obs_frame_indices, latent_frame_indices = get_indices(i, T=T, step_size=step_size, **get_indices_kwargs)
+        if len(obs_frame_indices) + len(latent_frame_indices) > max_T:
+            print(f"**WARNING**: Dropping {len(obs_frame_indices) + len(latent_frame_indices) - max_T} of the observed frames because they don't fit in the GPU memory.")
+            obs_frame_indices = obs_frame_indices[:max_T-len(latent_frame_indices)] # drops the last frames, if not fitting in the GPU memory.
             if assert_fits_gpu:
                 raise RuntimeError("The batch is too large to fit in the GPU memory.")
-        print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.")
+        print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.\n")
         # Prepare network's input
         x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1)
         frame_indices = torch.cat([obs_frame_indices, latent_frame_indices], dim=0).repeat((B, 1))
@@ -123,7 +127,7 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
     samples_base = batch[:1].cpu().clone() # Start with a batch size of 1
     if mode == "simple-autoreg":
         get_indices = get_indices_simple_autoreg
-        get_indices_kwargs = dict(n=1)
+        get_indices_kwargs = {}
     elif mode == "exp-past":
         get_indices = get_indices_exp_past
         get_indices_kwargs = {}
@@ -136,10 +140,10 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
 
     i = T - 1
     # Prepare frame indices
-    obs_frame_indices, latent_frame_indices = get_indices(i, **get_indices_kwargs)
-    if len(obs_frame_indices) > max_T - 1:
-            print(f"**WARNING**: Dropping {len(obs_frame_indices) - max_T + 1} of the observed frames because they don't fir in the GPU memory.")
-            obs_frame_indices = obs_frame_indices[:max_T-1] # drops the last frames, if not fitting in the GPU memory.
+    obs_frame_indices, latent_frame_indices = get_indices(i, T=T, step_size=args.step_size, **get_indices_kwargs)
+    if len(obs_frame_indices) + len(latent_frame_indices) > max_T:
+            print(f"**WARNING**: Dropping {len(obs_frame_indices) + len(latent_frame_indices) - max_T} of the observed frames because they don't fit in the GPU memory.")
+            obs_frame_indices = obs_frame_indices[:max_T-len(latent_frame_indices)] # drops the last frames, if not fitting in the GPU memory.
             if assert_fits_gpu:
                 raise RuntimeError("The batch is too large to fit in the GPU memory.")
     print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.")
@@ -194,7 +198,7 @@ def main(args, model, diffusion, dataloader):
         args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{Path(args.checkpoint_path).stem}_{model_step}")
     else:
         args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_T}"
+    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_T}_{args.step_size}"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
 
@@ -210,7 +214,7 @@ def main(args, model, diffusion, dataloader):
             batch = batch.to(args.device)
             recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                 batch=batch, max_T=args.max_T, obs_length=args.obs_length,
-                                assert_fits_gpu=args.assert_fits_gpu)
+                                assert_fits_gpu=args.assert_fits_gpu, step_size=args.step_size)
             recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
             recon = recon.astype(np.uint8)
             for i in range(batch_size):
@@ -229,12 +233,14 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--inference_mode", required=True,
-                        choices=["simple-autoreg", "exp-past", "multi-granuality", "independent"])
+                        choices=["naive", "simple-autoreg", "exp-past", "multi-granuality", "independent"])
     # Inference arguments
     parser.add_argument("--max_T", type=int, default=10,
                         help="Maximum length of the sequence that fits in the GPU memory.")
     parser.add_argument("--obs_length", type=int, default=36,
                         help="Number of observed frames. It will observe this many frames from the beginning of the video and predict the rest.")
+    parser.add_argument("--step_size", type=int, default=1,
+                        help="Number of frames to predict in each prediciton step. Ignored for multi-granuality inference mode. Defults to 1.")
     parser.add_argument("--indices", type=int, nargs="*", default=None,
                         help="If not None, only generate videos for the specified indices.")
     parser.add_argument("--assert_fits_gpu", action="store_true",
