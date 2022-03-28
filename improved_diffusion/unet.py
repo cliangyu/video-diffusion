@@ -43,15 +43,11 @@ class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
             kwargs = {}
             if isinstance(layer, TimestepBlock):
                 kwargs['emb'] = emb
-            if isinstance(layer, AttentionBlock):
+            elif isinstance(layer, AttentionBlock) or isinstance(layer, FactorizedAttentionBlock):
                 kwargs['attn_mask'] = attn_mask
                 kwargs['T'] = T
-            if isinstance(layer, AttentionBlock):
-                x, layer_attn = layer(x, **kwargs)
-                if attn_weights_list is not None:
-                    attn_weights_list.append(layer_attn.detach().mean(dim=1))
-            else:
-                x = layer(x, **kwargs)
+                kwargs['attn_weights_list'] = attn_weights_list
+            x = layer(x, **kwargs)
         return x
 
 
@@ -224,7 +220,7 @@ class AttentionBlock(nn.Module):
         self.attention = QKVAttention()
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
 
-    def forward(self, x, attn_mask, T=1):
+    def forward(self, x, attn_mask, T=1, attn_weights_list=None):
         """
         attn_mask is a mask of shape B x T of what can attend to things, or be attended to
         """
@@ -232,10 +228,12 @@ class AttentionBlock(nn.Module):
         B = BT//T
         x = x.view(B, T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
         if attn_mask is not None:
-            attn_mask = attn_mask.view(B, T, 1, 1).expand(B, T, *spatial)
+            attn_mask = attn_mask.view(B, T, *((1,)*len(spatial))).expand(B, T, *spatial)
         out, attn = checkpoint(self._forward, (x, attn_mask),
                                self.parameters(), self.use_checkpoint)
-        return out.transpose(1, 2).reshape(BT, C, *spatial), attn
+        if attn_weights_list is not None:
+            attn_weights_list['mixed'].append(attn.detach().mean(dim=1))
+        return out.transpose(1, 2).reshape(BT, C, *spatial)
 
     def _forward(self, x, attn_mask):
         b, c, *spatial = x.shape
@@ -249,6 +247,36 @@ class AttentionBlock(nn.Module):
         h = h.reshape(b, -1, h.shape[-1])
         h = self.proj_out(h)
         return (x + h).reshape(b, c, *spatial), attn_weights
+
+
+class FactorizedAttentionBlock(nn.Module):
+    """
+    Loosely based on CSDI's factorized attention for time-series data.
+    https://openreview.net/pdf?id=VzuIzbRDrum
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.spatial_attention = AttentionBlock(*args, **kwargs)
+        self.frame_attention = AttentionBlock(*args, **kwargs)
+
+    def forward(self, x, attn_mask, T, attn_weights_list=None):
+        # move spatial locations to batch dimensino so they can't attend to eachother
+        BT, C, H, W = x.shape
+        B = BT//T
+        x = x.view(B, T, C, H, W).permute(0, 3, 4, 1, 2)  # B, H, W, T, C
+        x = x.reshape(B*H*W*T, C, 1)
+        attn_mask = attn_mask.view(B, T).repeat(H*W, 1)
+        frame_attn = {'mixed': []}
+        x = self.frame_attention(x, attn_mask=attn_mask, T=T, attn_weights_list=frame_attn)
+        # and reshape back
+        x = x.view(B, H, W, T, C).permute(0, 3, 4, 1, 2)  # B, T, C, H, W
+        x = x.view(BT, C, H, W)
+        spatial_attn = {'mixed': []}
+        x = self.spatial_attention(x, attn_mask=None, T=1, attn_weights_list=spatial_attn)
+        if attn_weights_list is not None:
+            attn_weights_list['spatial'].append(spatial_attn['mixed'][0].detach().view(B, T, H*W, H*W).mean(dim=1))
+            attn_weights_list['frame'].append(frame_attn['mixed'][0].detach().view(B, H*W, T, T).mean(dim=1))
+        return x
 
 
 class QKVAttention(nn.Module):
@@ -343,6 +371,7 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         use_spatial_encoding=False,
         image_size=None,
+        factorized_attention=False,
     ):
         super().__init__()
 
@@ -383,6 +412,7 @@ class UNetModel(nn.Module):
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
+        AttentionBlockType = FactorizedAttentionBlock if factorized_attention else AttentionBlock
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 if ds in attention_resolutions and self.n_blocks_before_attn is None:
@@ -403,7 +433,7 @@ class UNetModel(nn.Module):
                 ch = mult * model_channels
                 if ds in attention_resolutions:
                     layers.append(
-                        AttentionBlock(
+                        AttentionBlockType(
                             ch, use_checkpoint=use_checkpoint, num_heads=num_heads,
                         )
                     )
@@ -439,7 +469,7 @@ class UNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            AttentionBlock(ch, use_checkpoint=use_checkpoint, num_heads=num_heads),
+            AttentionBlockType(ch, use_checkpoint=use_checkpoint, num_heads=num_heads),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -467,7 +497,7 @@ class UNetModel(nn.Module):
                 ch = model_channels * mult
                 if ds in attention_resolutions:
                     layers.append(
-                        AttentionBlock(
+                        AttentionBlockType(
                             ch,
                             use_checkpoint=use_checkpoint,
                             num_heads=num_heads_upsample,
@@ -529,7 +559,7 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.inner_dtype)
-        attns = [] if return_attn_weights else None
+        attns = {'spatial': [], 'frame': [], 'mixed': []} if return_attn_weights else None
         for layer, module in enumerate(self.input_blocks):   # add frame embedding after first input block
             h = module(h, emb, attn_mask, T=T, attn_weights_list=attns)
             hs.append(h)

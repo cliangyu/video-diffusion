@@ -448,19 +448,21 @@ class GaussianDiffusion:
             if return_attn_weights:
                 t = self.num_timesteps - neg_t - 1
                 quartile = (4*t)//self.num_timesteps
-                k = f"attn/q{quartile}"
-                if k not in attns:
-                    attns[k] = 0.
-                attn_t = sample["attn"]
-                largest_attn_shape = attn_t[0].shape  # due to U-net structure
-                for attn_layer in attn_t:
-                    # scale up to match size of largest layer
-                    reshaped = th.nn.functional.interpolate(
-                        attn_layer.unsqueeze(0).unsqueeze(0), size=largest_attn_shape,
-                        mode='nearest',
-                    ).squeeze(0).squeeze(0)
-                    reshaped = reshaped / reshaped.mean() * attn_layer.mean()  # renormalise
-                    attns[k] = attns[k] + reshaped/(self.num_timesteps/4)
+                for key, attn_t in sample["attn"].items():
+                    if len(attn_t) == 0:
+                        continue
+                    tag = f"attn/q{quartile}-{key}"
+                    if tag not in attns:
+                        attns[tag] = 0
+                    largest_attn_shape = attn_t[0][0].shape  # due to U-net structure
+                    for attn_layer in attn_t:
+                        # scale up to match size of largest layer
+                        reshaped = th.nn.functional.interpolate(
+                            attn_layer.unsqueeze(0), size=largest_attn_shape,
+                            mode='nearest',
+                        ).squeeze(0)
+                        reshaped = reshaped / reshaped.mean() * attn_layer.mean()  # renormalise
+                        attns[tag] = attns[tag] + reshaped/(self.num_timesteps/4)
             final = sample
         return final["sample"], attns
 

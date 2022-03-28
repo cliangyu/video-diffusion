@@ -517,8 +517,16 @@ class TrainLoop:
             else:
                 raise NotImplementedError()
             return attn
-        spatial_attn = {'spatial-'+k: reshape_attn(v, 'spatial') for k, v in attns.items()}
-        frame_attn = {'frame-'+k: reshape_attn(v, 'frame') for k, v in attns.items()}
+        if len([k for k in attns if 'spatial' in k]) == 0:
+            spatial_attn = {k.replace('mixed', 'spatial-from-mixed'): reshape_attn(v, 'spatial')
+                            for k, v in attns.items() if 'mixed' in k}
+        else:
+            spatial_attn = {k: v for k, v in attns.items() if 'spatial' in k}
+        if len([k for k in attns if 'frame' in k]) == 0:
+            frame_attn = {k.replace('mixed', 'frame-from-mixed'): reshape_attn(v, 'frame')
+                            for k, v in attns.items() if 'mixed' in k}
+        else:
+            frame_attn = {k: v for k, v in attns.items() if 'frame' in k}
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
