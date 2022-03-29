@@ -19,6 +19,13 @@ from improved_diffusion.image_datasets import get_test_dataset
 from improved_diffusion.script_util import str2bool
 
 
+# A dictionary of default model configs for the parameters newly introduced.
+# It enables backward compatibility
+default_model_configs = {"enforce_position_invariance": False,
+                         "factorized_attention": False,
+                         "temporal_attention_type": "dpa"}
+
+
 @torch.no_grad()
 def get_indices_simple_autoreg(cur_idx, T, step_size=1):
     """
@@ -272,6 +279,10 @@ if __name__ == "__main__":
     model_args = data["config"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
+    # Update model parameters, if needed, to enable backward compatibility
+    for k, v in default_model_configs.items():
+        if k not in model_args:
+            model_args[k] = v
     model_args = Namespace(**model_args)
     # Load the model
     model, diffusion = create_video_model_and_diffusion(
