@@ -317,10 +317,10 @@ class TemporalInteraction(nn.Module):
     def forward(self, x, ts, attn_mask):
         """Foment interactions along the T-dimension of a BxTxC tensor."""
         B, T, C = x.shape
-        ts = (ts.float() / 500)
         values = self.project(x.view(B*T, C)).view(B, 1, T, C)
         relative_ts = ts.view(B, T, 1, 1) - ts.view(B, 1, T, 1)  # BxTxTx1
-        relative_ts = th.cat([relative_ts, -relative_ts], dim=-1).clamp(min=0)
+        relative_ts = th.cat([relative_ts, -relative_ts], dim=-1).float().clamp(min=0)
+        relative_ts = th.log(1+relative_ts)
         h = 0.
         if self.include_t:
             h = h + self.embed_ts(relative_ts.view(-1, 2)).view(B, T, T, C)
