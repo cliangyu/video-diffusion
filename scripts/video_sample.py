@@ -16,6 +16,7 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion import dist_util
 from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.script_util import str2bool
 
 
 @torch.no_grad()
@@ -256,6 +257,8 @@ if __name__ == "__main__":
                              " If this argument is not specified, the program will drop observed enough frames to make sure it fits in the GPU memory.")
     parser.add_argument("--dryrun_gpu_memory", action="store_true",
                         help="Dry run the GPU memory. If this argument is specified, the program will run the GPU memory test to figure out the maximum batch size that fits in the GPU memory.")
+    parser.add_argument("--use_ddim", type=str2bool, default=False)
+    parser.add_argument("--timestep_respacing", type=str, default="")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -263,7 +266,10 @@ if __name__ == "__main__":
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
-    model_args = Namespace(**data["config"])
+    model_args = data["config"]
+    model_args.update({"use_ddim": args.use_ddim,
+                       "timestep_respacing": args.timestep_respacing})
+    model_args = Namespace(**model_args)
     # Load the model
     model, diffusion = create_video_model_and_diffusion(
         **args_to_dict(model_args, video_model_and_diffusion_defaults().keys())
