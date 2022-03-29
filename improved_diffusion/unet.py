@@ -38,7 +38,7 @@ class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
     A sequential module that passes timestep embeddings to the children that
     support it as an extra input.
     """
-    def forward(self, x, emb, attn_mask, T=1, attn_weights_list=None):
+    def forward(self, x, emb, attn_mask, T=1, frame_indices=None, attn_weights_list=None):
         for layer in self:
             kwargs = {}
             if isinstance(layer, TimestepBlock):
@@ -47,6 +47,8 @@ class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
                 kwargs['attn_mask'] = attn_mask
                 kwargs['T'] = T
                 kwargs['attn_weights_list'] = attn_weights_list
+                if isinstance(layer, FactorizedAttentionBlock):
+                    kwargs['frame_indices'] = frame_indices
             x = layer(x, **kwargs)
         return x
 
@@ -254,12 +256,23 @@ class FactorizedAttentionBlock(nn.Module):
     Loosely based on CSDI's factorized attention for time-series data.
     https://openreview.net/pdf?id=VzuIzbRDrum
     """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, channels, num_heads=1, use_checkpoint=False, temporal_attention_type='dpa'):
         super().__init__()
-        self.spatial_attention = AttentionBlock(*args, **kwargs)
-        self.frame_attention = AttentionBlock(*args, **kwargs)
+        self.spatial_attention = AttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint)
+        self.temporal_attention_type = temporal_attention_type
+        if temporal_attention_type == 'dpa':
+            self.frame_attention = AttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint)
+        elif temporal_attention_type == 'other':
+            self.frame_interaction = TemporalInteraction(channels, include_x=True, include_t=True)
+        elif temporal_attention_type == 'other_no_x':
+            self.frame_interaction = TemporalInteraction(channels, include_x=False, include_t=True)
+        elif temporal_attention_type == 'other_no_t':
+            self.frame_interaction = TemporalInteraction(channels, include_x=True, include_t=False)
+        else:
+            raise NotImplementedError
 
-    def forward(self, x, attn_mask, T, attn_weights_list=None):
+
+    def forward(self, x, attn_mask, T, attn_weights_list=None, frame_indices=None):
         # move spatial locations to batch dimensino so they can't attend to eachother
         BT, C, H, W = x.shape
         B = BT//T
@@ -267,7 +280,12 @@ class FactorizedAttentionBlock(nn.Module):
         x = x.reshape(B*H*W*T, C, 1)
         attn_mask = attn_mask.view(B, T).repeat(H*W, 1)
         frame_attn = {'mixed': []}
-        x = self.frame_attention(x, attn_mask=attn_mask, T=T, attn_weights_list=frame_attn)
+        if self.temporal_attention_type == 'dpa':
+            x = self.frame_attention(x, attn_mask=attn_mask, T=T, attn_weights_list=frame_attn)
+        else:
+            x = x.view(B*H*W, T, C)
+            x, attn = self.frame_interaction(x, ts=frame_indices.view(B, T).repeat(H*W, 1), attn_mask=attn_mask)
+            frame_attn['mixed'].append(attn.expand(-1, T, T))
         # and reshape back
         x = x.view(B, H, W, T, C).permute(0, 3, 4, 1, 2)  # B, T, C, H, W
         x = x.reshape(BT, C, H, W)
@@ -277,6 +295,48 @@ class FactorizedAttentionBlock(nn.Module):
             attn_weights_list['spatial'].append(spatial_attn['mixed'][0].detach().view(B, T, H*W, H*W).mean(dim=1))
             attn_weights_list['frame'].append(frame_attn['mixed'][0].detach().view(B, H*W, T, T).mean(dim=1))
         return x
+
+
+class TemporalInteraction(nn.Module):
+
+    def __init__(self, channels, include_x, include_t):
+        super().__init__()
+        self.project = nn.Linear(channels, channels)
+        self.include_x = include_x
+        if include_x:
+            self.embed_xs = nn.Linear(channels, channels)
+        self.include_t = include_t
+        if include_t:
+            self.embed_ts = nn.Linear(2, channels)
+        self.get_importances = nn.Sequential(
+            nn.ReLU(),
+            nn.Linear(channels, channels),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x, ts, attn_mask):
+        """Foment interactions along the T-dimension of a BxTxC tensor."""
+        B, T, C = x.shape
+        ts = (ts.float() / 500)
+        values = self.project(x.view(B*T, C)).view(B, 1, T, C)
+        relative_ts = ts.view(B, T, 1, 1) - ts.view(B, 1, T, 1)  # BxTxTx1
+        relative_ts = th.cat([relative_ts, -relative_ts], dim=-1).clamp(min=0)
+        h = 0.
+        if self.include_t:
+            h = h + self.embed_ts(relative_ts.view(-1, 2)).view(B, T, T, C)
+        if self.include_x:
+            h = h + self.embed_xs(x.view(-1, C)).view(B, 1, T, C)
+        importances = self.get_importances(h.view(-1, C)).view(B, -1, T, C)
+        importances = importances * attn_mask.view(B, 1, T, 1)
+        interactions = th.logsumexp(values*importances, dim=2)
+        return x + interactions, importances.mean(dim=3)
+
+
+def init_attention_block(channels, factorized_attention, use_checkpoint, num_heads, temporal_attention_type):
+    if not factorized_attention:
+        return AttentionBlock(channels, use_checkpoint=use_checkpoint, num_heads=num_heads)
+    return FactorizedAttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint,
+                                    temporal_attention_type=temporal_attention_type)
 
 
 class QKVAttention(nn.Module):
@@ -372,6 +432,7 @@ class UNetModel(nn.Module):
         use_spatial_encoding=False,
         image_size=None,
         factorized_attention=False,
+        temporal_attention_type=None,
     ):
         super().__init__()
 
@@ -412,7 +473,6 @@ class UNetModel(nn.Module):
         input_block_chans = [model_channels]
         ch = model_channels
         ds = 1
-        AttentionBlockType = FactorizedAttentionBlock if factorized_attention else AttentionBlock
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 if ds in attention_resolutions and self.n_blocks_before_attn is None:
@@ -433,9 +493,9 @@ class UNetModel(nn.Module):
                 ch = mult * model_channels
                 if ds in attention_resolutions:
                     layers.append(
-                        AttentionBlockType(
-                            ch, use_checkpoint=use_checkpoint, num_heads=num_heads,
-                        )
+                        init_attention_block(ch, factorized_attention=factorized_attention,
+                                             use_checkpoint=use_checkpoint, num_heads=num_heads,
+                                             temporal_attention_type=temporal_attention_type)
                     )
                 self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
@@ -469,7 +529,9 @@ class UNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            AttentionBlockType(ch, use_checkpoint=use_checkpoint, num_heads=num_heads),
+            init_attention_block(ch, factorized_attention=factorized_attention,
+                                 use_checkpoint=use_checkpoint, num_heads=num_heads,
+                                 temporal_attention_type=temporal_attention_type),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -497,11 +559,9 @@ class UNetModel(nn.Module):
                 ch = model_channels * mult
                 if ds in attention_resolutions:
                     layers.append(
-                        AttentionBlockType(
-                            ch,
-                            use_checkpoint=use_checkpoint,
-                            num_heads=num_heads_upsample,
-                        )
+                        init_attention_block(ch, factorized_attention=factorized_attention,
+                                             use_checkpoint=use_checkpoint, num_heads=num_heads,
+                                             temporal_attention_type=temporal_attention_type)
                     )
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))
@@ -538,7 +598,7 @@ class UNetModel(nn.Module):
         return next(self.input_blocks.parameters()).dtype
 
     def forward(self, x, timesteps, y=None, attn_mask=None, T=1,
-                return_attn_weights=False, **pos_enc_kwargs):
+                return_attn_weights=False, frame_indices=None):
         """
         Apply the model to an input batch.
 
@@ -561,14 +621,14 @@ class UNetModel(nn.Module):
         h = x.type(self.inner_dtype)
         attns = {'spatial': [], 'frame': [], 'mixed': []} if return_attn_weights else None
         for layer, module in enumerate(self.input_blocks):   # add frame embedding after first input block
-            h = module(h, emb, attn_mask, T=T, attn_weights_list=attns)
+            h = module(h, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
             hs.append(h)
             if layer + 1 == self.n_blocks_before_attn:
-                h = self.add_positional_encodings(h, **pos_enc_kwargs)
-        h = self.middle_block(h, emb, attn_mask, T=T, attn_weights_list=attns)
+                h = self.add_positional_encodings(h, frame_indices=frame_indices)
+        h = self.middle_block(h, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
         for module in self.output_blocks:
             cat_in = th.cat([h, hs.pop()], dim=1)
-            h = module(cat_in, emb, attn_mask, T=T, attn_weights_list=attns)
+            h = module(cat_in, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
         h = h.type(x.dtype)
         out = self.out(h)
         return out, attns
