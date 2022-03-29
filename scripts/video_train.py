@@ -71,6 +71,7 @@ def main():
         do_inefficient_marg=args.do_inefficient_marg,
         n_valid_batches=args.n_valid_batches,
         n_valid_repeats=args.n_valid_repeats,
+        n_interesting_masks=args.n_interesting_masks,
         max_frames=args.max_frames,
         T=args.T,
         args=args,
@@ -100,6 +101,7 @@ def create_argparser():
         do_inefficient_marg=False,
         n_valid_batches=1,
         n_valid_repeats=2,
+        n_interesting_masks=3,
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
         resume_id="",

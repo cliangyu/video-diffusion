@@ -58,6 +58,7 @@ class TrainLoop:
         n_valid_batches=1,
         n_valid_repeats=1,
         max_frames=10,
+        n_interesting_masks=3,
         args=None
     ):
         assert args is not None
@@ -132,6 +133,7 @@ class TrainLoop:
             self.ddp_model = self.model
         self.n_valid_batches = n_valid_batches
         self.n_valid_repeats = n_valid_repeats
+        self.n_interesting_masks = n_interesting_masks
         with RNG(0):
             self.valid_batches = [next(self.data)[0][:self.microbatch]
                                   for i in range(self.n_valid_batches)]
@@ -424,7 +426,7 @@ class TrainLoop:
             return params
 
     def make_interesting_masks(self, batch):
-        n_masks = min(3, len(batch))
+        n_masks = min(self.n_interesting_masks, len(batch))
         def make_zeros():
             return th.zeros_like(batch[:n_masks, :, :1, :1, :1])
         obs_mask = make_zeros()
