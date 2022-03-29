@@ -193,7 +193,7 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
         sm += local_samples.sum().item() # Don't know if Python might optimize the code at runtime and ignore local_samples. This bit avoid the potnetial optimization.
 
 
-def main(args, model, diffusion, dataloader):
+def main(args, model, diffusion, dataloader, postfix=""):
     # Prepare the indices
     if args.indices is None:
         if "SLURM_ARRAY_TASK_ID" in os.environ:
@@ -204,7 +204,10 @@ def main(args, model, diffusion, dataloader):
     # Create the output directory (if does not exist)
     model_step = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")["step"]
     if args.out_dir is None:
-        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{Path(args.checkpoint_path).stem}_{model_step}")
+        name = f"{Path(args.checkpoint_path).stem}_{model_step}"
+        if postfix != "":
+            name += f"_{postfix}"
+        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
     else:
         args.out_dir = Path(args.out_dir)
     args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_T}_{args.step_size}"
@@ -286,4 +289,9 @@ if __name__ == "__main__":
     if args.dryrun_gpu_memory:
         dryrun_gpu_memory(args, model, diffusion, dataloader)
     else:
-        main(args, model, diffusion, dataloader)
+        postfix = ""
+        if args.use_ddim:
+            postfix += "_ddim"
+        if args.timestep_respacing != "":
+            postfix += "_" + f"respace{args.timestep_respacing}"
+        main(args, model, diffusion, dataloader, postfix=postfix)
