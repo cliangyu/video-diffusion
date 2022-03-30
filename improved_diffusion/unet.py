@@ -43,12 +43,12 @@ class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
             kwargs = {}
             if isinstance(layer, TimestepBlock):
                 kwargs['emb'] = emb
-            elif isinstance(layer, AttentionBlock) or isinstance(layer, FactorizedAttentionBlock):
+            elif isinstance(layer, FactorizedAttentionBlock):
+                kwargs['temb'] = emb
                 kwargs['attn_mask'] = attn_mask
                 kwargs['T'] = T
                 kwargs['attn_weights_list'] = attn_weights_list
-                if isinstance(layer, FactorizedAttentionBlock):
-                    kwargs['frame_indices'] = frame_indices
+                kwargs['frame_indices'] = frame_indices
             x = layer(x, **kwargs)
         return x
 
@@ -203,52 +203,159 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-class AttentionBlock(nn.Module):
-    """
-    An attention block that allows spatial positions to attend to each other.
+# class AttentionBlock(nn.Module):
+#     """
+#     An attention block that allows spatial positions to attend to each other.
 
-    Originally ported from here, but adapted to the N-d case.
-    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
-    """
+#     Originally ported from here, but adapted to the N-d case.
+#     https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
+#     """
 
-    def __init__(self, channels, num_heads=1, use_checkpoint=False):
+#     def __init__(self, channels, num_heads=1, use_checkpoint=False):
+#         super().__init__()
+#         self.channels = channels
+#         self.num_heads = num_heads
+#         self.use_checkpoint = use_checkpoint
+
+#         self.norm = normalization(channels)
+#         self.qkv = conv_nd(1, channels, channels * 3, 1)
+#         self.attention = QKVAttention()
+#         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+
+#     def forward(self, x, attn_mask, T=1, attn_weights_list=None):
+#         """
+#         attn_mask is a mask of shape B x T of what can attend to things, or be attended to
+#         """
+#         BT, C, *spatial = x.shape
+#         B = BT//T
+#         x = x.view(B, T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
+#         if attn_mask is not None:
+#             attn_mask = attn_mask.view(B, T, *((1,)*len(spatial))).expand(B, T, *spatial)
+#         out, attn = checkpoint(self._forward, (x, attn_mask),
+#                                self.parameters(), self.use_checkpoint)
+#         if attn_weights_list is not None:
+#             attn_weights_list['mixed'].append(attn.detach().mean(dim=1))
+#         return out.transpose(1, 2).reshape(BT, C, *spatial)
+
+#     def _forward(self, x, attn_mask):
+#         b, c, *spatial = x.shape
+#         x = x.reshape(b, c, -1)
+#         qkv = self.qkv(self.norm(x))
+#         qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
+#         if attn_mask is not None:
+#             attn_mask = attn_mask.reshape(b, -1).repeat(self.num_heads, 1)
+#         h, attn_weights = self.attention(qkv, attn_mask=attn_mask)
+#         attn_weights = attn_weights.view(b, self.num_heads, *attn_weights.shape[1:])
+#         h = h.reshape(b, -1, h.shape[-1])
+#         h = self.proj_out(h)
+#         return (x + h).reshape(b, c, *spatial), attn_weights
+
+
+class AugmentedTransformer(nn.Module):
+    valid_augment_types = [
+        'none',
+        'add_presoftmax', 'add_presoftmax_time',
+        'add', 'add_time',
+        'mult', 'mult_time',
+        'add_manyhead_presoftmax', 'add_manyhead_presoftmax_time',
+        'add_manyhead', 'add_manyhead_time',
+        'mult_manyhead', 'mult_manyhead_time',
+    ]
+    compare = [
+        'add_manyhead_presoftmax_time',
+        'add_presoftmax_time',
+        'add_manyhead_presoftmax',
+        'add_manyhead_time',
+        'mult_manyhead_time',
+    ]
+
+    def __init__(self, channels, num_heads, time_embed_dim, use_checkpoint=False, augment_type='none'):
+        assert augment_type in self.valid_augment_types
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads
+        self.time_embed_dim = time_embed_dim
         self.use_checkpoint = use_checkpoint
-
+        self.augment_type = augment_type
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
-        self.attention = QKVAttention()
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
 
-    def forward(self, x, attn_mask, T=1, attn_weights_list=None):
-        """
-        attn_mask is a mask of shape B x T of what can attend to things, or be attended to
-        """
-        BT, C, *spatial = x.shape
-        B = BT//T
-        x = x.view(B, T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
-        if attn_mask is not None:
-            attn_mask = attn_mask.view(B, T, *((1,)*len(spatial))).expand(B, T, *spatial)
-        out, attn = checkpoint(self._forward, (x, attn_mask),
-                               self.parameters(), self.use_checkpoint)
-        if attn_weights_list is not None:
-            attn_weights_list['mixed'].append(attn.detach().mean(dim=1))
-        return out.transpose(1, 2).reshape(BT, C, *spatial)
+        # augmentation stuff
+        self.manyhead = 'manyhead' in augment_type
+        self.use_time = 'time' in augment_type
+        self.presoftmax = 'presoftmax' in augment_type
+        self.multiplicative = 'mult'  in augment_type
+        if not self.multiplicative:
+            assert 'add' in augment_type or augment_type == 'none'
+        # print("self.manyhead, self.use_time, self.presoftmax, self.multiplicative")
+        # print(self.manyhead, self.use_time, self.presoftmax, self.multiplicative)
+        if augment_type == 'none':
+            pass
+        else:
+            self.augment_layer1 = conv_nd(2, 2, channels, 1)
+            if self.use_time:
+                self.augment_layer2 = conv_nd(2, time_embed_dim, channels, 1)
+            self.augment_layer3 = conv_nd(2, channels, channels if self.manyhead else num_heads, 1)
 
-    def _forward(self, x, attn_mask):
-        b, c, *spatial = x.shape
-        x = x.reshape(b, c, -1)
-        qkv = self.qkv(self.norm(x))
-        qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
-        if attn_mask is not None:
-            attn_mask = attn_mask.reshape(b, -1).repeat(self.num_heads, 1)
-        h, attn_weights = self.attention(qkv, attn_mask=attn_mask)
-        attn_weights = attn_weights.view(b, self.num_heads, *attn_weights.shape[1:])
-        h = h.reshape(b, -1, h.shape[-1])
+    def forward(self, x, temb, frame_indices, attn_mask=None, attn_weights_list=None):
+        out, attn = checkpoint(self._forward, (x, temb, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
+        if attn_weights_list is not None:
+            attn_weights_list.append(attn.detach().mean(dim=1).abs())
+        return out
+
+    def _forward(self, x, temb, frame_indices, attn_mask):
+        B, C, T = x.shape
+        x = self.norm(x)
+        qkv = self.qkv(x)
+        qkv = self.qkv(self.norm(x)).view(B, 3, C//self.num_heads, self.num_heads, T)
+        q, k, v = (qkv[:, i] for i in range(3))
+        _, channels_per_head, _, _ =  q.shape
+        scale = 1 / math.sqrt(math.sqrt(channels_per_head))
+        weight = th.einsum(
+            "bcht,bchs->bhts", q * scale, k * scale
+        )  # More stable with f16 than dividing afterwards
+
+        if self.augment_type != 'none':
+            # compute w_aug
+            relative = frame_indices.view(B, 1, 1, T) - frame_indices.view(B, 1, T, 1)  # BxTxTx1
+            relative = th.cat([relative, -relative], dim=1).float().clamp(min=0)
+            relative = th.log(1+relative)
+            emb = self.augment_layer1(relative)
+            if self.use_time:
+                emb = emb + self.augment_layer2(temb.view(B, -1, T, 1))
+            w_aug = self.augment_layer3(th.relu(emb))
+            if not self.manyhead:
+                w_aug = w_aug.repeat(1, channels_per_head, 1, 1)
+
+        def softmax(w, attn_mask):
+            if attn_mask is not None:
+                inf_mask = (1-attn_mask)
+                inf_mask[inf_mask == 1] = th.inf
+                w = w - inf_mask.view(B, 1, 1, T)
+            return th.softmax(w.float(), dim=-1).type(w.dtype)
+
+        if self.augment_type == 'none':
+            weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
+            h = th.einsum("bhts,bchs->bcht", weight, v)
+            assert h.shape == (B, channels_per_head, self.num_heads, T)
+            h = h.reshape(B, C, T)
+        else:
+            weight = weight.repeat(1, channels_per_head, 1, 1)  # expand to explicitly have weight for each channel
+            if self.presoftmax:
+                weight = weight*w_aug if self.multiplicative else weight+w_aug
+                weight = softmax(weight, attn_mask)
+            else:
+                weight = softmax(weight, attn_mask)
+                weight = weight*w_aug if self.multiplicative else weight+w_aug
+                if attn_mask is not None:
+                    weight = weight * attn_mask.view(B, 1, 1, T)
+            v = v.view(B, C, T)
+            h = th.einsum('bcts,bcs->bct', weight, v)
+
+        assert h.shape == (B, C, T)
         h = self.proj_out(h)
-        return (x + h).reshape(b, c, *spatial), attn_weights
+        return x + h, weight
 
 
 class FactorizedAttentionBlock(nn.Module):
@@ -256,140 +363,86 @@ class FactorizedAttentionBlock(nn.Module):
     Loosely based on CSDI's factorized attention for time-series data.
     https://openreview.net/pdf?id=VzuIzbRDrum
     """
-    def __init__(self, channels, num_heads=1, use_checkpoint=False, temporal_attention_type='dpa'):
+    def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none'):
         super().__init__()
-        self.spatial_attention = AttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint)
-        self.temporal_attention_type = temporal_attention_type
-        if temporal_attention_type == 'dpa':
-            self.frame_attention = AttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint)
-        elif temporal_attention_type == 'other':
-            self.frame_interaction = TemporalInteraction(channels, include_x=True, include_t=True)
-        elif temporal_attention_type == 'other_no_x':
-            self.frame_interaction = TemporalInteraction(channels, include_x=False, include_t=True)
-        elif temporal_attention_type == 'other_no_t':
-            self.frame_interaction = TemporalInteraction(channels, include_x=True, include_t=False)
-        else:
-            raise NotImplementedError
+        self.spatial_attention = AugmentedTransformer(
+            channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
+            augment_type='none')
+        self.temporal_attention = AugmentedTransformer(
+            channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
+            augment_type=temporal_augment_type)
 
 
-    def forward(self, x, attn_mask, T, attn_weights_list=None, frame_indices=None):
+    def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
         # move spatial locations to batch dimensino so they can't attend to eachother
         BT, C, H, W = x.shape
         B = BT//T
-        x = x.view(B, T, C, H, W).permute(0, 3, 4, 1, 2)  # B, H, W, T, C
-        x = x.reshape(B*H*W*T, C, 1)
-        attn_mask = attn_mask.view(B, T).repeat(H*W, 1)
-        frame_attn = {'mixed': []}
-        if self.temporal_attention_type == 'dpa':
-            x = self.frame_attention(x, attn_mask=attn_mask, T=T, attn_weights_list=frame_attn)
-        else:
-            x = x.view(B*H*W, T, C)
-            x, attn = self.frame_interaction(x, ts=frame_indices.view(B, T).repeat(H*W, 1), attn_mask=attn_mask)
-            frame_attn['mixed'].append(attn.expand(-1, T, T))
+        x = x.view(B, T, C, H, W).permute(0, 3, 4, 2, 1)  # B, H, W, C, T
+        x = x.reshape(B*H*W, C, T)
+        x = self.temporal_attention(x,
+                                    temb.view(B, 1, T, -1).permute(0, 1, 3, 2).repeat(1, H*W, 1, 1).view(B*H*W, -1, T),
+                                    frame_indices.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
+                                    attn_mask=attn_mask.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
+                                    attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
         # and reshape back
-        x = x.view(B, H, W, T, C).permute(0, 3, 4, 1, 2)  # B, T, C, H, W
+        x = x.view(B, H, W, C, T).permute(0, 4, 3, 1, 2)  # B, T, C, H, W
+        x = x.reshape(BT, C, H*W)
+        x = self.spatial_attention(x, temb=None, frame_indices=None,
+                                   attn_weights_list=None if attn_weights_list is None else attn_weights_list['spatial'])
+        # and reshape back
         x = x.reshape(BT, C, H, W)
-        spatial_attn = {'mixed': []}
-        x = self.spatial_attention(x, attn_mask=None, T=1, attn_weights_list=spatial_attn)
-        if attn_weights_list is not None:
-            attn_weights_list['spatial'].append(spatial_attn['mixed'][0].detach().view(B, T, H*W, H*W).mean(dim=1))
-            attn_weights_list['frame'].append(frame_attn['mixed'][0].detach().view(B, H*W, T, T).mean(dim=1))
         return x
 
 
-class TemporalInteraction(nn.Module):
+# class QKVAttention(nn.Module):
+#     """
+#     A module which performs QKV attention.
+#     """
 
-    def __init__(self, channels, include_x, include_t, pool_type='logsumexp'):
-        super().__init__()
-        self.project = nn.Linear(channels, channels)
-        self.include_x = include_x
-        self.pool_type = pool_type
-        if include_x:
-            self.embed_xs = nn.Linear(channels, channels)
-        self.include_t = include_t
-        if include_t:
-            self.embed_ts = nn.Linear(2, channels)
-        self.get_importances = nn.Sequential(
-            nn.ReLU(),
-            nn.Linear(channels, channels),
-            nn.Sigmoid(),
-        )
+#     def forward(self, qkv, attn_mask):
+#         """
+#         Apply QKV attention.
 
-    def forward(self, x, ts, attn_mask):
-        """Foment interactions along the T-dimension of a BxTxC tensor."""
-        B, T, C = x.shape
-        values = self.project(x.view(B*T, C)).view(B, 1, T, C)
-        relative_ts = ts.view(B, T, 1, 1) - ts.view(B, 1, T, 1)  # BxTxTx1
-        relative_ts = th.cat([relative_ts, -relative_ts], dim=-1).float().clamp(min=0)
-        relative_ts = th.log(1+relative_ts)
-        h = 0.
-        if self.include_t:
-            h = h + self.embed_ts(relative_ts.view(-1, 2)).view(B, T, T, C)
-        if self.include_x:
-            h = h + self.embed_xs(x.view(-1, C)).view(B, 1, T, C)
-        importances = self.get_importances(h.view(-1, C)).view(B, -1, T, C)
-        importances = importances * attn_mask.view(B, 1, T, 1)
-        pooler = {'logsumexp': th.logsumexp, 'max': th.max}[self.pool_type]
-        interactions = pooler(values*importances, dim=2)
-        return x + interactions, importances.mean(dim=3)
+#         :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
+#         :attn_mask: an [N x T] binary tensor denoting what may be attended to
+#         :return: an [N x C x T] tensor after attention.
+#         """
+#         n, ch3, t = qkv.shape
+#         ch = ch3 // 3
+#         q, k, v = th.split(qkv, ch, dim=1)
+#         scale = 1 / math.sqrt(math.sqrt(ch))
+#         weight = th.einsum(
+#             "bct,bcs->bts", q * scale, k * scale
+#         ).float()  # More stable with f16 than dividing afterwards
+#         if attn_mask is not None:
+#             inf_mask = (1-attn_mask)
+#             inf_mask[inf_mask == 1] = th.inf
+#             weight = weight - inf_mask.view(n, 1, t)
+#         weight = th.softmax(weight, dim=-1).type(weight.dtype)
+#         return th.einsum("bts,bcs->bct", weight, v), weight
 
+#     @staticmethod
+#     def count_flops(model, _x, y):
+#         """
+#         A counter for the `thop` package to count the operations in an
+#         attention operation.
 
-def init_attention_block(channels, factorized_attention, use_checkpoint, num_heads, temporal_attention_type):
-    if not factorized_attention:
-        return AttentionBlock(channels, use_checkpoint=use_checkpoint, num_heads=num_heads)
-    return FactorizedAttentionBlock(channels, num_heads=num_heads, use_checkpoint=use_checkpoint,
-                                    temporal_attention_type=temporal_attention_type)
+#         Meant to be used like:
 
+#             macs, params = thop.profile(
+#                 model,
+#                 inputs=(inputs, timestamps),
+#                 custom_ops={QKVAttention: QKVAttention.count_flops},
+#             )
 
-class QKVAttention(nn.Module):
-    """
-    A module which performs QKV attention.
-    """
-
-    def forward(self, qkv, attn_mask):
-        """
-        Apply QKV attention.
-
-        :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
-        :attn_mask: an [N x T] binary tensor denoting what may be attended to
-        :return: an [N x C x T] tensor after attention.
-        """
-        n, ch3, t = qkv.shape
-        ch = ch3 // 3
-        q, k, v = th.split(qkv, ch, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
-            "bct,bcs->bts", q * scale, k * scale
-        ).float()  # More stable with f16 than dividing afterwards
-        if attn_mask is not None:
-            inf_mask = (1-attn_mask)
-            inf_mask[inf_mask == 1] = th.inf
-            weight = weight - inf_mask.view(n, 1, t)
-        weight = th.softmax(weight, dim=-1).type(weight.dtype)
-        return th.einsum("bts,bcs->bct", weight, v), weight
-
-    @staticmethod
-    def count_flops(model, _x, y):
-        """
-        A counter for the `thop` package to count the operations in an
-        attention operation.
-
-        Meant to be used like:
-
-            macs, params = thop.profile(
-                model,
-                inputs=(inputs, timestamps),
-                custom_ops={QKVAttention: QKVAttention.count_flops},
-            )
-
-        """
-        b, c, *spatial = y[0].shape
-        num_spatial = int(np.prod(spatial))
-        # We perform two matmuls with the same number of ops.
-        # The first computes the weight matrix, the second computes
-        # the combination of the value vectors.
-        matmul_ops = 2 * b * (num_spatial ** 2) * c
-        model.total_ops += th.DoubleTensor([matmul_ops])
+#         """
+#         b, c, *spatial = y[0].shape
+#         num_spatial = int(np.prod(spatial))
+#         # We perform two matmuls with the same number of ops.
+#         # The first computes the weight matrix, the second computes
+#         # the combination of the value vectors.
+#         matmul_ops = 2 * b * (num_spatial ** 2) * c
+#         model.total_ops += th.DoubleTensor([matmul_ops])
 
 
 class UNetModel(nn.Module):
@@ -433,8 +486,7 @@ class UNetModel(nn.Module):
         use_scale_shift_norm=False,
         use_spatial_encoding=False,
         image_size=None,
-        factorized_attention=False,
-        temporal_attention_type=None,
+        temporal_augment_type=None,
     ):
         super().__init__()
 
@@ -495,9 +547,8 @@ class UNetModel(nn.Module):
                 ch = mult * model_channels
                 if ds in attention_resolutions:
                     layers.append(
-                        init_attention_block(ch, factorized_attention=factorized_attention,
-                                             use_checkpoint=use_checkpoint, num_heads=num_heads,
-                                             temporal_attention_type=temporal_attention_type)
+                        FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
+                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type)
                     )
                 self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
@@ -531,9 +582,8 @@ class UNetModel(nn.Module):
                 use_checkpoint=use_checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
-            init_attention_block(ch, factorized_attention=factorized_attention,
-                                 use_checkpoint=use_checkpoint, num_heads=num_heads,
-                                 temporal_attention_type=temporal_attention_type),
+            FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
+                                     use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -561,9 +611,8 @@ class UNetModel(nn.Module):
                 ch = model_channels * mult
                 if ds in attention_resolutions:
                     layers.append(
-                        init_attention_block(ch, factorized_attention=factorized_attention,
-                                             use_checkpoint=use_checkpoint, num_heads=num_heads,
-                                             temporal_attention_type=temporal_attention_type)
+                        FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
+                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type),
                     )
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))
@@ -621,7 +670,7 @@ class UNetModel(nn.Module):
             emb = emb + self.label_emb(y)
 
         h = x.type(self.inner_dtype)
-        attns = {'spatial': [], 'frame': [], 'mixed': []} if return_attn_weights else None
+        attns = {'spatial': [], 'temporal': [], 'mixed': []} if return_attn_weights else None
         for layer, module in enumerate(self.input_blocks):   # add frame embedding after first input block
             h = module(h, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
             hs.append(h)

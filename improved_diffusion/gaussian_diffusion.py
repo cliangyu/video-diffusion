@@ -456,8 +456,9 @@ class GaussianDiffusion:
                         attns[tag] = 0
                     largest_attn_shape = attn_t[0][0].shape  # due to U-net structure
                     for attn_layer in attn_t:
-                        # scale up to match size of largest layer
-                        if 'frame' in key:
+                        B = shape[0]
+                        attn_layer = attn_layer.view(B, attn_layer.shape[0]//B, *attn_layer.shape[1:]).mean(dim=1)  # average over non-attended dimension
+                        if 'temporal' in key:
                             reshaped = attn_layer
                         else:
                             reshaped = th.nn.functional.interpolate(

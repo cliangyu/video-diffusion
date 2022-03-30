@@ -43,9 +43,8 @@ def video_model_and_diffusion_defaults():
     defaults['use_frame_encoding'] = True
     defaults['cross_frame_attention'] = True
     defaults['do_cond_marg'] = True
-    defaults['enforce_position_invariance'] = False
-    defaults['factorized_attention'] = False
-    defaults['temporal_attention_type'] = 'dpa'
+    defaults['enforce_position_invariance'] = True
+    defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
     return defaults
 
 
@@ -125,8 +124,7 @@ def create_video_model_and_diffusion(
     cross_frame_attention,
     do_cond_marg,
     enforce_position_invariance,
-    factorized_attention,
-    temporal_attention_type,
+    temporal_augment_type,
 ):
     model = create_video_model(
         T,
@@ -146,8 +144,7 @@ def create_video_model_and_diffusion(
         cross_frame_attention=cross_frame_attention,
         do_cond_marg=do_cond_marg,
         enforce_position_invariance=enforce_position_invariance,
-        factorized_attention=factorized_attention,
-        temporal_attention_type=temporal_attention_type,
+        temporal_augment_type=temporal_augment_type,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -226,8 +223,7 @@ def create_video_model(
     cross_frame_attention,
     do_cond_marg,
     enforce_position_invariance,
-    factorized_attention,
-    temporal_attention_type
+    temporal_augment_type
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -262,8 +258,7 @@ def create_video_model(
         cross_frame_attention=cross_frame_attention,
         enforce_position_invariance=enforce_position_invariance,
         image_size=image_size,
-        factorized_attention=factorized_attention,
-        temporal_attention_type=temporal_attention_type,
+        temporal_augment_type=temporal_augment_type,
     )
 
 

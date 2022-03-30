@@ -504,36 +504,14 @@ class TrainLoop:
         logger.logkv('rmse', rmse.cpu().item())
 
         # visualise the attn weights ------------------------------------------
-        def reshape_attn(attn, to):
-            b, q, k = attn.shape
-            assert q == k
-            d = int((q // self.max_frames)**0.5)
-            attn = attn.view(b, self.max_frames, d, d, self.max_frames, d, d)
-            if to == 'frame':
-                attn = attn.sum(dim=(2, 3, 5, 6)).view(b, self.max_frames, self.max_frames)
-            elif to == 'spatial':
-                frames = list(range(self.max_frames))
-                attn = attn[:, frames, :, :, frames, :, :].sum(dim=0).view(b, d*d, d*d)
-            else:
-                raise NotImplementedError()
-            return attn
-        if len([k for k in attns if 'spatial' in k]) == 0:
-            spatial_attn = {k.replace('mixed', 'spatial-from-mixed'): reshape_attn(v, 'spatial')
-                            for k, v in attns.items() if 'mixed' in k}
-        else:
-            spatial_attn = {k: v for k, v in attns.items() if 'spatial' in k}
-        if len([k for k in attns if 'frame' in k]) == 0:
-            frame_attn = {k.replace('mixed', 'frame-from-mixed'): reshape_attn(v, 'frame')
-                            for k, v in attns.items() if 'mixed' in k}
-        else:
-            frame_attn = {k: v for k, v in attns.items() if 'frame' in k}
+        spatial_attn = {k: v for k, v in attns.items() if 'spatial' in k}
+        frame_attn = {k: v for k, v in attns.items() if 'temporal' in k}
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
             fig = Figure(figsize=(5, 4.5*len(batch)))
             canvas = FigureCanvas(fig)
             axes = [fig.add_subplot(len(batch), 1, i+1) for i in range(len(batch))]
-            print(attn.shape)
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
                 n_frames = attn_matrix.shape[-1]
                 ax.imshow(attn_matrix, vmin=0, cmap='binary_r')
