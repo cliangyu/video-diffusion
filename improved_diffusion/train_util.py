@@ -533,6 +533,7 @@ class TrainLoop:
             fig = Figure(figsize=(5, 4.5*len(batch)))
             canvas = FigureCanvas(fig)
             axes = [fig.add_subplot(len(batch), 1, i+1) for i in range(len(batch))]
+            print(attn.shape)
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
                 n_frames = attn_matrix.shape[-1]
                 ax.imshow(attn_matrix, vmin=0, cmap='binary_r')

@@ -457,11 +457,14 @@ class GaussianDiffusion:
                     largest_attn_shape = attn_t[0][0].shape  # due to U-net structure
                     for attn_layer in attn_t:
                         # scale up to match size of largest layer
-                        reshaped = th.nn.functional.interpolate(
-                            attn_layer.unsqueeze(0), size=largest_attn_shape,
-                            mode='nearest',
-                        ).squeeze(0)
-                        reshaped = reshaped / reshaped.mean() * attn_layer.mean()  # renormalise
+                        if 'frame' in key:
+                            reshaped = attn_layer
+                        else:
+                            reshaped = th.nn.functional.interpolate(
+                                attn_layer.unsqueeze(0), size=largest_attn_shape,
+                                mode='nearest',
+                            ).squeeze(0)
+                            reshaped = reshaped / reshaped.mean() * attn_layer.mean()  # renormalise
                         attns[tag] = attns[tag] + reshaped/(self.num_timesteps/4)
             final = sample
         return final["sample"], attns

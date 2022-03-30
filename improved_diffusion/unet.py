@@ -299,10 +299,11 @@ class FactorizedAttentionBlock(nn.Module):
 
 class TemporalInteraction(nn.Module):
 
-    def __init__(self, channels, include_x, include_t):
+    def __init__(self, channels, include_x, include_t, pool_type='logsumexp'):
         super().__init__()
         self.project = nn.Linear(channels, channels)
         self.include_x = include_x
+        self.pool_type = pool_type
         if include_x:
             self.embed_xs = nn.Linear(channels, channels)
         self.include_t = include_t
@@ -328,7 +329,8 @@ class TemporalInteraction(nn.Module):
             h = h + self.embed_xs(x.view(-1, C)).view(B, 1, T, C)
         importances = self.get_importances(h.view(-1, C)).view(B, -1, T, C)
         importances = importances * attn_mask.view(B, 1, T, 1)
-        interactions = th.logsumexp(values*importances, dim=2)
+        pooler = {'logsumexp': th.logsumexp, 'max': th.max}[self.pool_type]
+        interactions = pooler(values*importances, dim=2)
         return x + interactions, importances.mean(dim=3)
 
 
