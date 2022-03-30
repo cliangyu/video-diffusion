@@ -284,7 +284,7 @@ class FactorizedAttentionBlock(nn.Module):
             x = self.frame_attention(x, attn_mask=attn_mask, T=T, attn_weights_list=frame_attn)
         else:
             x = x.view(B*H*W, T, C)
-            x, attn = self.frame_interaction(x, ts=frame_indices.view(B, T).repeat(H*W, 1), attn_mask=attn_mask)
+            x, attn = self.frame_interaction(x, ts=frame_indices.view(B, 1, 1, T).repeat(1, H, W, 1).view(B*H*W, T), attn_mask=attn_mask)
             frame_attn['mixed'].append(attn.expand(-1, T, T))
         # and reshape back
         x = x.view(B, H, W, T, C).permute(0, 3, 4, 1, 2)  # B, T, C, H, W
