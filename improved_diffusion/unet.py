@@ -374,7 +374,6 @@ class FactorizedAttentionBlock(nn.Module):
 
 
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
-        # move spatial locations to batch dimensino so they can't attend to eachother
         BT, C, H, W = x.shape
         B = BT//T
         x = x.view(B, T, C, H, W).permute(0, 3, 4, 2, 1)  # B, H, W, C, T
@@ -384,12 +383,10 @@ class FactorizedAttentionBlock(nn.Module):
                                     frame_indices.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
                                     attn_mask=attn_mask.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
                                     attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
-        # and reshape back
         x = x.view(B, H, W, C, T).permute(0, 4, 3, 1, 2)  # B, T, C, H, W
         x = x.reshape(BT, C, H*W)
         x = self.spatial_attention(x, temb=None, frame_indices=None,
                                    attn_weights_list=None if attn_weights_list is None else attn_weights_list['spatial'])
-        # and reshape back
         x = x.reshape(BT, C, H, W)
         return x
 

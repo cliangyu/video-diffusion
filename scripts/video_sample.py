@@ -16,6 +16,14 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion import dist_util
 from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.script_util import str2bool
+
+
+# A dictionary of default model configs for the parameters newly introduced.
+# It enables backward compatibility
+default_model_configs = {"enforce_position_invariance": False,
+                         "factorized_attention": False,
+                         "temporal_attention_type": "dpa"}
 
 
 @torch.no_grad()
@@ -192,7 +200,7 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
         sm += local_samples.sum().item() # Don't know if Python might optimize the code at runtime and ignore local_samples. This bit avoid the potnetial optimization.
 
 
-def main(args, model, diffusion, dataloader):
+def main(args, model, diffusion, dataloader, postfix=""):
     # Prepare the indices
     if args.indices is None:
         if "SLURM_ARRAY_TASK_ID" in os.environ:
@@ -203,7 +211,10 @@ def main(args, model, diffusion, dataloader):
     # Create the output directory (if does not exist)
     model_step = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")["step"]
     if args.out_dir is None:
-        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{Path(args.checkpoint_path).stem}_{model_step}")
+        name = f"{Path(args.checkpoint_path).stem}_{model_step}"
+        if postfix != "":
+            name += f"_{postfix}"
+        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
     else:
         args.out_dir = Path(args.out_dir)
     args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_T}_{args.step_size}"
@@ -256,6 +267,8 @@ if __name__ == "__main__":
                              " If this argument is not specified, the program will drop observed enough frames to make sure it fits in the GPU memory.")
     parser.add_argument("--dryrun_gpu_memory", action="store_true",
                         help="Dry run the GPU memory. If this argument is specified, the program will run the GPU memory test to figure out the maximum batch size that fits in the GPU memory.")
+    parser.add_argument("--use_ddim", type=str2bool, default=False)
+    parser.add_argument("--timestep_respacing", type=str, default="")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -263,7 +276,14 @@ if __name__ == "__main__":
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
-    model_args = Namespace(**data["config"])
+    model_args = data["config"]
+    model_args.update({"use_ddim": args.use_ddim,
+                       "timestep_respacing": args.timestep_respacing})
+    # Update model parameters, if needed, to enable backward compatibility
+    for k, v in default_model_configs.items():
+        if k not in model_args:
+            model_args[k] = v
+    model_args = Namespace(**model_args)
     # Load the model
     model, diffusion = create_video_model_and_diffusion(
         **args_to_dict(model_args, video_model_and_diffusion_defaults().keys())
@@ -280,4 +300,9 @@ if __name__ == "__main__":
     if args.dryrun_gpu_memory:
         dryrun_gpu_memory(args, model, diffusion, dataloader)
     else:
-        main(args, model, diffusion, dataloader)
+        postfix = ""
+        if args.use_ddim:
+            postfix += "_ddim"
+        if args.timestep_respacing != "":
+            postfix += "_" + f"respace{args.timestep_respacing}"
+        main(args, model, diffusion, dataloader, postfix=postfix)
