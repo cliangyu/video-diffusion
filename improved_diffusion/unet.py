@@ -259,6 +259,7 @@ class AugmentedTransformer(nn.Module):
         'mult', 'mult_time',
         'add_manyhead_presoftmax', 'add_manyhead_presoftmax_time',
         'add_manyhead', 'add_manyhead_time',
+        'mult_manyhead_presoftmax', 'mult_manyhead_presoftmax_time',
         'mult_manyhead', 'mult_manyhead_time',
     ]
     compare = [
