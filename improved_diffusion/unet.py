@@ -203,54 +203,6 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-# class AttentionBlock(nn.Module):
-#     """
-#     An attention block that allows spatial positions to attend to each other.
-
-#     Originally ported from here, but adapted to the N-d case.
-#     https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
-#     """
-
-#     def __init__(self, channels, num_heads=1, use_checkpoint=False):
-#         super().__init__()
-#         self.channels = channels
-#         self.num_heads = num_heads
-#         self.use_checkpoint = use_checkpoint
-
-#         self.norm = normalization(channels)
-#         self.qkv = conv_nd(1, channels, channels * 3, 1)
-#         self.attention = QKVAttention()
-#         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
-
-#     def forward(self, x, attn_mask, T=1, attn_weights_list=None):
-#         """
-#         attn_mask is a mask of shape B x T of what can attend to things, or be attended to
-#         """
-#         BT, C, *spatial = x.shape
-#         B = BT//T
-#         x = x.view(B, T, C, *spatial).transpose(1, 2)  # gives B x C x T x ...
-#         if attn_mask is not None:
-#             attn_mask = attn_mask.view(B, T, *((1,)*len(spatial))).expand(B, T, *spatial)
-#         out, attn = checkpoint(self._forward, (x, attn_mask),
-#                                self.parameters(), self.use_checkpoint)
-#         if attn_weights_list is not None:
-#             attn_weights_list['mixed'].append(attn.detach().mean(dim=1))
-#         return out.transpose(1, 2).reshape(BT, C, *spatial)
-
-#     def _forward(self, x, attn_mask):
-#         b, c, *spatial = x.shape
-#         x = x.reshape(b, c, -1)
-#         qkv = self.qkv(self.norm(x))
-#         qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
-#         if attn_mask is not None:
-#             attn_mask = attn_mask.reshape(b, -1).repeat(self.num_heads, 1)
-#         h, attn_weights = self.attention(qkv, attn_mask=attn_mask)
-#         attn_weights = attn_weights.view(b, self.num_heads, *attn_weights.shape[1:])
-#         h = h.reshape(b, -1, h.shape[-1])
-#         h = self.proj_out(h)
-#         return (x + h).reshape(b, c, *spatial), attn_weights
-
-
 class AugmentedTransformer(nn.Module):
     valid_augment_types = [
         'none',
@@ -294,7 +246,7 @@ class AugmentedTransformer(nn.Module):
         if augment_type == 'none':
             pass
         else:
-            self.augment_layer1 = conv_nd(2, 2, channels, 1)
+            self.augment_layer1 = conv_nd(2, 3, channels, 1)
             if self.use_time:
                 self.augment_layer2 = conv_nd(2, time_embed_dim, channels, 1)
             self.augment_layer3 = conv_nd(2, channels, channels if self.manyhead else num_heads, 1)
@@ -320,7 +272,9 @@ class AugmentedTransformer(nn.Module):
         if self.augment_type != 'none':
             # compute w_aug
             relative = frame_indices.view(B, 1, 1, T) - frame_indices.view(B, 1, T, 1)  # BxTxTx1
-            relative = th.cat([relative, -relative], dim=1).float().clamp(min=0)
+            relative = th.cat([
+                relative.float().clamp(min=0), (-relative).float().clamp(min=0), (relative == 0).float()
+            ], dim=1)
             relative = th.log(1+relative)
             emb = self.augment_layer1(relative)
             if self.use_time:
