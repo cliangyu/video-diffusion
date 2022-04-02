@@ -108,10 +108,14 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
                 raise RuntimeError("The batch is too large to fit in the GPU memory.")
         print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.\n")
         # Prepare network's input
-        x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1)
+        x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
         frame_indices = torch.cat([obs_frame_indices, latent_frame_indices], dim=0).repeat((B, 1))
         # Prepare masks
         obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
+        print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
+        print(f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}")
+        print(f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}")
+        print("-" * 40)
         # Move tensors to the correct device
         [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
         # Run the network
@@ -200,7 +204,8 @@ def dryrun_gpu_memory(args, model, diffusion, dataloader):
         sm += local_samples.sum().item() # Don't know if Python might optimize the code at runtime and ignore local_samples. This bit avoid the potnetial optimization.
 
 
-def main(args, model, diffusion, dataloader, postfix=""):
+def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
+    dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Prepare the indices
     if args.indices is None:
         if "SLURM_ARRAY_TASK_ID" in os.environ:
@@ -225,11 +230,13 @@ def main(args, model, diffusion, dataloader, postfix=""):
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
-        output_filenames = [args.out_dir / f"sample_{cnt + i:04d}.npy" for i in range(batch_size)]
+        output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}.npy" for i in range(batch_size)]
         todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
         if not any(todo):
             print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}.")
         else:
+            if args.T is not None:
+                batch = batch[:, :args.T]
             batch = batch.to(args.device)
             recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                 batch=batch, max_T=args.max_T, obs_length=args.obs_length,
@@ -261,7 +268,7 @@ if __name__ == "__main__":
     parser.add_argument("--step_size", type=int, default=1,
                         help="Number of frames to predict in each prediciton step. Ignored for multi-granuality inference mode. Defults to 1.")
     parser.add_argument("--indices", type=int, nargs="*", default=None,
-                        help="If not None, only generate videos for the specified indices.")
+                        help="If not None, only generate videos for the specified indices. Used for handling parallelization.")
     parser.add_argument("--assert_fits_gpu", action="store_true",
                         help="Assert that the batches fit in the GPU memory. If not, the program will exit."
                              " If this argument is not specified, the program will drop observed enough frames to make sure it fits in the GPU memory.")
@@ -269,6 +276,10 @@ if __name__ == "__main__":
                         help="Dry run the GPU memory. If this argument is specified, the program will run the GPU memory test to figure out the maximum batch size that fits in the GPU memory.")
     parser.add_argument("--use_ddim", type=str2bool, default=False)
     parser.add_argument("--timestep_respacing", type=str, default="")
+    parser.add_argument("--T", type=int, default=None,
+                        help="Length of the videos. If not specified, it will be inferred from the dataset.")
+    parser.add_argument("--subset_size", type=int, default=None,
+                        help="If not None, only use a subset of the dataset. Defaults to the whole dataset.")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -295,6 +306,12 @@ if __name__ == "__main__":
     model.eval()
     # Load the test set
     dataset = get_test_dataset("minerl")#(dataset_name=model_args.dataset) # TODO: fix
+    if args.subset_size is not None:
+        indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
+        dataset = torch.utils.data.Subset(dataset, list(range(args.subset_size)))
+        print(f"Randomly subsampled {args.subset_size} samples from the dataset.")
+    else:
+        indices = None
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     print(f"Dataset size = {len(dataset)}")
     if args.dryrun_gpu_memory:
@@ -305,4 +322,4 @@ if __name__ == "__main__":
             postfix += "_ddim"
         if args.timestep_respacing != "":
             postfix += "_" + f"respace{args.timestep_respacing}"
-        main(args, model, diffusion, dataloader, postfix=postfix)
+        main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=indices)
