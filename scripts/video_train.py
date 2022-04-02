@@ -74,6 +74,7 @@ def main():
         n_interesting_masks=args.n_interesting_masks,
         max_frames=args.max_frames,
         T=args.T,
+        mask_distribution=args.mask_distribution,
         args=args,
     )
     if args.just_visualise:
@@ -105,6 +106,7 @@ def create_argparser():
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
+        mask_distribution="differently-spaced-groups",   # can also do consecutive-groups
         just_visualise=False,
     )
     defaults.update(video_model_and_diffusion_defaults())

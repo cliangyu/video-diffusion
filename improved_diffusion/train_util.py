@@ -59,6 +59,7 @@ class TrainLoop:
         n_valid_repeats=1,
         max_frames=10,
         n_interesting_masks=3,
+        mask_distribution="differently-spaced-groups",
         args=None
     ):
         assert args is not None
@@ -134,6 +135,7 @@ class TrainLoop:
         self.n_valid_batches = n_valid_batches
         self.n_valid_repeats = n_valid_repeats
         self.n_interesting_masks = n_interesting_masks
+        self.mask_distribution = mask_distribution
         with RNG(0):
             self.valid_batches = [next(self.data)[0][:self.microbatch]
                                   for i in range(self.n_valid_batches)]
@@ -197,7 +199,12 @@ class TrainLoop:
     def sample_some_indices(self, max_indices, T):
         s = th.randint(low=1, high=max_indices+1, size=())
         max_scale = T / (s-0.999)
-        scale = np.exp(np.random.rand() * np.log(max_scale))
+        if self.mask_distribution == "differently-spaced-groups":
+            scale = np.exp(np.random.rand() * np.log(max_scale))
+        elif self.mask_distribution == "consecutive-groups":
+            scale = 1
+        else:
+            raise NotImplementedError
         pos = th.rand(()) * (T - scale*(s-1))
         indices = [int(pos+i*scale) for i in range(s)]
         # do some recursion if we have somehow failed to satisfy the consrtaints
