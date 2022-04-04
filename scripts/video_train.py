@@ -105,6 +105,7 @@ def create_argparser():
         do_inefficient_marg=False,
         n_valid_batches=1,
         n_valid_repeats=2,
+        valid_microbatch=-1,
         n_interesting_masks=3,
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
