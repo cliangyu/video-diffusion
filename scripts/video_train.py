@@ -17,12 +17,12 @@ from improved_diffusion.script_util import (
 from improved_diffusion.train_util import TrainLoop
 
 
-os.environ["WANDB_DIR"] = "none"
+os.environ["MY_WANDB_DIR"] = "none"
 if "--unobserve" in sys.argv:
     sys.argv.remove("--unobserve")
     os.environ["WANDB_MODE"] = "dryrun"
     if "WANDB_DIR_DRYRUN" in os.environ:
-        os.environ["WANDB_DIR"] = os.environ["WANDB_DIR_DRYRUN"]
+        os.environ["MY_WANDB_DIR"] = os.environ["WANDB_DIR_DRYRUN"]
 
 
 def main():
