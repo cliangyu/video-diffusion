@@ -218,7 +218,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     if args.out_dir is None:
         name = f"{Path(args.checkpoint_path).stem}_{model_step}"
         if postfix != "":
-            name += f"_{postfix}"
+            name += postfix
         args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
     else:
         args.out_dir = Path(args.out_dir)
