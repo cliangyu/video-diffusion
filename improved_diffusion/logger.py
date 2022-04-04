@@ -156,7 +156,7 @@ class WandbOutputFormat(KVWriter, SeqWriter):
         wandb.init(entity='universal-conditional-ddpm',
                    project='video-diffusion',
                    config=config,
-                   dir=None if "WANDB_DIR" in os.environ else None,
+                   dir=None if "WANDB_DIR" in os.environ and os.environ["WANDB_DIR"] != "none" else None,
                    **wandb_kwargs)
 
     def writekvs(self, kvs):

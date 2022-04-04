@@ -17,7 +17,7 @@ from improved_diffusion.script_util import (
 from improved_diffusion.train_util import TrainLoop
 
 
-os.environ["WANDB_DIR"]=None
+os.environ["WANDB_DIR"] = "none"
 if "--unobserve" in sys.argv:
     sys.argv.remove("--unobserve")
     os.environ["WANDB_MODE"] = "dryrun"
