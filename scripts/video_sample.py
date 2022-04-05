@@ -230,7 +230,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
-        for sample_cnt in range(args.samples_per_batch):
+        for sample_cnt in range(args.num_samples):
             output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_cnt}.npy" for i in range(batch_size)]
             todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
