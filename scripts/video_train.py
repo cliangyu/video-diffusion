@@ -4,6 +4,7 @@ Train a diffusion model on videos.
 
 import argparse
 import os, sys
+import wandb
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_video_data, default_T_dict, default_image_size_dict
@@ -45,6 +46,7 @@ def main():
     )
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+    wandb.log({"num_parameters": sum(p.numel() for p in model.parameters())})
 
     logger.log("creating data loader...")
     data = load_video_data(
