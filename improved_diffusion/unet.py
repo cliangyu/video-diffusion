@@ -254,19 +254,26 @@ class AugmentedTransformer(nn.Module):
     def forward(self, x, temb, frame_indices, attn_mask=None, attn_weights_list=None):
         out, attn = checkpoint(self._forward, (x, temb, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
         if attn_weights_list is not None:
-            attn_weights_list.append(attn.detach().mean(dim=1).abs())
+            B, D, C, T = x.shape
+            attn_weights_list.append(attn.detach().view(B*D, -1, T, T).mean(dim=1).abs())
         return out
 
     def _forward(self, x, temb, frame_indices, attn_mask):
-        B, C, T = x.shape
-        x = self.norm(x)
+        """
+        x - shape B x D x C x T - batch x D (e.g. spatial dimension along which temb, frame_indices and attn_mask don't vary)
+        temb - B x C x T (althout Tth dimension should all be the same)
+        frame_indices - B x T
+        attn_mask - B x T
+        """
+        B, D, C, T = x.shape
+        x = self.norm(x.view(B*D, C, T))
         qkv = self.qkv(x)
-        qkv = self.qkv(self.norm(x)).view(B, 3, C//self.num_heads, self.num_heads, T)
-        q, k, v = (qkv[:, i] for i in range(3))
-        _, channels_per_head, _, _ =  q.shape
+        qkv = self.qkv(self.norm(x)).view(B, D, 3, C//self.num_heads, self.num_heads, T)
+        q, k, v = (qkv[:, :, i] for i in range(3))
+        _, _, channels_per_head, _, _ =  q.shape
         scale = 1 / math.sqrt(math.sqrt(channels_per_head))
         weight = th.einsum(
-            "bcht,bchs->bhts", q * scale, k * scale
+            "bdcht,bdchs->bdhts", q * scale, k * scale  # BxHxTxT
         )  # More stable with f16 than dividing afterwards
 
         if self.augment_type != 'none':
@@ -278,25 +285,27 @@ class AugmentedTransformer(nn.Module):
             relative = th.log(1+relative)
             emb = self.augment_layer1(relative)
             if self.use_time:
-                emb = emb + self.augment_layer2(temb.view(B, -1, T, 1))
-            w_aug = self.augment_layer3(th.relu(emb))
+                emb = emb + self.augment_layer2(temb.view(B, -1, T, 1))   # B x C x T x T
+            w_aug = self.augment_layer3(th.relu(emb))   # BxCxTxT or BxHxTxT
             if not self.manyhead:
-                w_aug = w_aug.repeat(1, channels_per_head, 1, 1)
+                w_aug = w_aug.repeat(1, channels_per_head, 1, 1)  # BxHxTxT
+                #
+            w_aug = w_aug.view(B, 1, C, T, T)
 
         def softmax(w, attn_mask):
             if attn_mask is not None:
                 inf_mask = (1-attn_mask)
                 inf_mask[inf_mask == 1] = th.inf
-                w = w - inf_mask.view(B, 1, 1, T)
+                w = w - inf_mask.view(B, 1, 1, 1, T)  # BxDxCxTxT
             return th.softmax(w.float(), dim=-1).type(w.dtype)
 
         if self.augment_type == 'none':
             weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-            h = th.einsum("bhts,bchs->bcht", weight, v)
-            assert h.shape == (B, channels_per_head, self.num_heads, T)
-            h = h.reshape(B, C, T)
+            h = th.einsum("bdhts,bdchs->bdcht", weight, v)
+            assert h.shape == (B, D, channels_per_head, self.num_heads, T)
+            h = h.reshape(B, D, C, T)
         else:
-            weight = weight.repeat(1, channels_per_head, 1, 1)  # expand to explicitly have weight for each channel
+            weight = weight.repeat(1, 1, channels_per_head, 1, 1)  # BxDxCxTxT
             if self.presoftmax:
                 weight = weight*w_aug if self.multiplicative else weight+w_aug
                 weight = softmax(weight, attn_mask)
@@ -304,13 +313,13 @@ class AugmentedTransformer(nn.Module):
                 weight = softmax(weight, attn_mask)
                 weight = weight*w_aug if self.multiplicative else weight+w_aug
                 if attn_mask is not None:
-                    weight = weight * attn_mask.view(B, 1, 1, T)
-            v = v.view(B, C, T)
-            h = th.einsum('bcts,bcs->bct', weight, v)
+                    weight = weight * attn_mask.view(B, D, 1, 1, T)
+            v = v.view(B, D, C, T)
+            h = th.einsum('bdcts,bdcs->bdct', weight, v)
 
-        assert h.shape == (B, C, T)
-        h = self.proj_out(h)
-        return x + h, weight
+        assert h.shape == (B, D, C, T)
+        h = self.proj_out(h.view(B*D, C, T)).view(B, D, C, T)
+        return x.view(B, D, C, T) + h, weight
 
 
 class FactorizedAttentionBlock(nn.Module):
@@ -332,14 +341,14 @@ class FactorizedAttentionBlock(nn.Module):
         BT, C, H, W = x.shape
         B = BT//T
         x = x.view(B, T, C, H, W).permute(0, 3, 4, 2, 1)  # B, H, W, C, T
-        x = x.reshape(B*H*W, C, T)
+        x = x.reshape(B, H*W, C, T)
         x = self.temporal_attention(x,
-                                    temb.view(B, 1, T, -1).permute(0, 1, 3, 2).repeat(1, H*W, 1, 1).view(B*H*W, -1, T),
-                                    frame_indices.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
-                                    attn_mask=attn_mask.view(B, 1, T).repeat(1, H*W, 1).view(B*H*W, T),
+                                    temb.view(B, T, -1).permute(0, 2, 1),  # B x C x T
+                                    frame_indices,  # B x T
+                                    attn_mask=attn_mask.flatten(start_dim=2).squeeze(dim=2), # B x T
                                     attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
         x = x.view(B, H, W, C, T).permute(0, 4, 3, 1, 2)  # B, T, C, H, W
-        x = x.reshape(BT, C, H*W)
+        x = x.reshape(BT, 1, C, H*W)
         x = self.spatial_attention(x, temb=None, frame_indices=None,
                                    attn_weights_list=None if attn_weights_list is None else attn_weights_list['spatial'])
         x = x.reshape(BT, C, H, W)
