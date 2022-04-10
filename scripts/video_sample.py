@@ -218,7 +218,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     if args.out_dir is None:
         name = f"{Path(args.checkpoint_path).stem}_{model_step}"
         if postfix != "":
-            name += f"_{postfix}"
+            name += postfix
         args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
     else:
         args.out_dir = Path(args.out_dir)
@@ -230,25 +230,26 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
-        output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}.npy" for i in range(batch_size)]
-        todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
-        if not any(todo):
-            print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}.")
-        else:
-            if args.T is not None:
-                batch = batch[:, :args.T]
-            batch = batch.to(args.device)
-            recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
-                                batch=batch, max_T=args.max_T, obs_length=args.obs_length,
-                                assert_fits_gpu=args.assert_fits_gpu, step_size=args.step_size)
-            recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
-            recon = recon.astype(np.uint8)
-            for i in range(batch_size):
-                if todo[i]:
-                    np.save(output_filenames[i], recon[i])
-                    print(f"*** Saved {output_filenames[i]} ***")
-                else:
-                    print(f"Skipped {output_filenames[i]}")
+        for sample_cnt in range(args.num_samples):
+            output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_cnt}.npy" for i in range(batch_size)]
+            todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
+            if not any(todo):
+                print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_cnt}.")
+            else:
+                if args.T is not None:
+                    batch = batch[:, :args.T]
+                batch = batch.to(args.device)
+                recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
+                                    batch=batch, max_T=args.max_T, obs_length=args.obs_length,
+                                    assert_fits_gpu=args.assert_fits_gpu, step_size=args.step_size)
+                recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
+                recon = recon.astype(np.uint8)
+                for i in range(batch_size):
+                    if todo[i]:
+                        np.save(output_filenames[i], recon[i])
+                        print(f"*** Saved {output_filenames[i]} ***")
+                    else:
+                        print(f"Skipped {output_filenames[i]}")
         cnt += batch_size
 
 
@@ -280,6 +281,7 @@ if __name__ == "__main__":
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
     parser.add_argument("--subset_size", type=int, default=None,
                         help="If not None, only use a subset of the dataset. Defaults to the whole dataset.")
+    parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values

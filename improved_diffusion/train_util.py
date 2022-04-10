@@ -69,6 +69,7 @@ class TrainLoop:
         self.data = data
         self.batch_size = batch_size
         self.microbatch = microbatch if microbatch > 0 else batch_size
+        self.valid_microbatch = args.valid_microbatch if args.valid_microbatch > 0 else batch_size
         self.lr = lr
         self.ema_rate = (
             [ema_rate]
@@ -137,7 +138,7 @@ class TrainLoop:
         self.n_interesting_masks = n_interesting_masks
         self.mask_distribution = mask_distribution
         with RNG(0):
-            self.valid_batches = [next(self.data)[0][:self.microbatch]
+            self.valid_batches = [next(self.data)[0][:self.valid_microbatch]
                                   for i in range(self.n_valid_batches)]
 
     def _load_and_sync_parameters(self):

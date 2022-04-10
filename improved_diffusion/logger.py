@@ -153,9 +153,13 @@ class WandbOutputFormat(KVWriter, SeqWriter):
     Logs key/value pairs to wandb.
     """
     def __init__(self, config, **wandb_kwargs):
+        wandb_dir = os.environ.get("MY_WANDB_DIR", "none")
+        if wandb_dir == "none":
+            wandb_dir = None
         wandb.init(entity='universal-conditional-ddpm',
                    project='video-diffusion',
                    config=config,
+                   dir=wandb_dir,
                    **wandb_kwargs)
 
     def writekvs(self, kvs):

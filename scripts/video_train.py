@@ -4,6 +4,7 @@ Train a diffusion model on videos.
 
 import argparse
 import os, sys
+import wandb
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_video_data, default_T_dict, default_image_size_dict
@@ -17,9 +18,12 @@ from improved_diffusion.script_util import (
 from improved_diffusion.train_util import TrainLoop
 
 
+os.environ["MY_WANDB_DIR"] = "none"
 if "--unobserve" in sys.argv:
     sys.argv.remove("--unobserve")
     os.environ["WANDB_MODE"] = "dryrun"
+    if "WANDB_DIR_DRYRUN" in os.environ:
+        os.environ["MY_WANDB_DIR"] = os.environ["WANDB_DIR_DRYRUN"]
 
 
 def main():
@@ -42,6 +46,7 @@ def main():
     )
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+    wandb.log({"num_parameters": sum(p.numel() for p in model.parameters())})
 
     logger.log("creating data loader...")
     data = load_video_data(
@@ -102,6 +107,7 @@ def create_argparser():
         do_inefficient_marg=False,
         n_valid_batches=1,
         n_valid_repeats=2,
+        valid_microbatch=-1,
         n_interesting_masks=3,
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
