@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision.transforms import ToTensor, Resize
+from pathlib import Path
+import shutil
 
 NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
@@ -90,7 +92,7 @@ def load_data(
         yield from loader
 
 
-def load_video_data(dataset_name, batch_size, T=None, image_size=None, deterministic=False):
+def load_video_data(dataset_name, batch_size, T=None, image_size=None, deterministic=False, num_workers=1):
     # NOTE this is just for loading training data (not test)
     data_path = video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
@@ -102,7 +104,7 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
     num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
     def get_loader(dataset):
         return DataLoader(
-            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=1, drop_last=True
+            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True
         )
     if dataset_name == "minerl":
         loader = MineRLDataLoader(
@@ -274,14 +276,19 @@ class MazesDataset:
     def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
-        self.path = path
+        self.path = Path(path)
         self.T = T
 
     def __len__(self):
-        return len(os.listdir(self.path))
+        path = _get_src_path(self.path)
+        return len(list(path.iterdir()))
 
     def __getitem__(self, idx):
-        path = os.path.join(self.path, "{}.pt".format(idx))
+        path = self.path / "{}.pt".format(idx)
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            src_path = _get_src_path(path)
+            shutil.copyfile(str(src_path), str(path))
         data = torch.load(path)
         if self.T < len(data):
             start_i = np.random.randint(len(data) - self.T + 1)
@@ -291,3 +298,16 @@ class MazesDataset:
         video = torch.stack([byte_to_tensor(frame) for frame in data])
         video = 2*video - 1
         return video, {}
+
+def _get_src_path(path):
+        """ Returns the source path to a file. This function is mainly used to cope with my way of handling SLURM_TMPDIR on CC.
+            If DATA_ROOT is defined as an environment variable, the datasets should be copied under it. This function is called
+            when we need the source path from a given path under DATA_ROOT.
+        """
+        if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+            # Verify that the path is under
+            data_root = Path(os.environ["DATA_ROOT"])
+            assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
+            src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
+            return src_path
+        return path
