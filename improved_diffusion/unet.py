@@ -266,9 +266,7 @@ class AugmentedTransformer(nn.Module):
         attn_mask - B x T
         """
         B, D, C, T = x.shape
-        x = self.norm(x.reshape(B*D, C, T))
-        qkv = self.qkv(x)
-        qkv = self.qkv(self.norm(x)).view(B, D, 3, C//self.num_heads, self.num_heads, T)
+        qkv = self.qkv(self.norm(x.view(B*D, C, T))).view(B, D, 3, C//self.num_heads, self.num_heads, T)
         q, k, v = (qkv[:, :, i] for i in range(3))
         _, _, channels_per_head, _, _ =  q.shape
         scale = 1 / math.sqrt(math.sqrt(channels_per_head))
