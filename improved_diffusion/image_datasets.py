@@ -144,6 +144,9 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         )
         numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
         dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+    elif dataset_name == "mazes":
+        data_path = os.path.join(data_path, "test")
+        dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
     return dataset
