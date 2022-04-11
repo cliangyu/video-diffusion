@@ -52,7 +52,8 @@ def main():
     data = load_video_data(
         dataset_name=args.dataset,
         batch_size=args.batch_size,
-        T=args.T
+        T=args.T,
+        num_workers=args.num_workers
     )
 
     logger.log("training...")
@@ -114,6 +115,7 @@ def create_argparser():
         resume_id="",
         mask_distribution="differently-spaced-groups",   # can also do consecutive-groups
         just_visualise=False,
+        num_workers=1
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
