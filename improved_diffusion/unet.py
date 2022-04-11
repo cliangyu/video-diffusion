@@ -266,7 +266,7 @@ class AugmentedTransformer(nn.Module):
         attn_mask - B x T
         """
         B, D, C, T = x.shape
-        x = self.norm(x.view(B*D, C, T))
+        x = self.norm(x.reshape(B*D, C, T))
         qkv = self.qkv(x)
         qkv = self.qkv(self.norm(x)).view(B, D, 3, C//self.num_heads, self.num_heads, T)
         q, k, v = (qkv[:, :, i] for i in range(3))
@@ -289,7 +289,6 @@ class AugmentedTransformer(nn.Module):
             w_aug = self.augment_layer3(th.relu(emb))   # BxCxTxT or BxHxTxT
             if not self.manyhead:
                 w_aug = w_aug.repeat(1, channels_per_head, 1, 1)  # BxHxTxT
-                #
             w_aug = w_aug.view(B, 1, C, T, T)
 
         def softmax(w, attn_mask):
@@ -313,7 +312,7 @@ class AugmentedTransformer(nn.Module):
                 weight = softmax(weight, attn_mask)
                 weight = weight*w_aug if self.multiplicative else weight+w_aug
                 if attn_mask is not None:
-                    weight = weight * attn_mask.view(B, D, 1, 1, T)
+                    weight = weight * attn_mask.view(B, 1, 1, 1, T)
             v = v.view(B, D, C, T)
             h = th.einsum('bdcts,bdcs->bdct', weight, v)
 
