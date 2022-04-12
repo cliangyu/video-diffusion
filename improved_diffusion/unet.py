@@ -330,7 +330,8 @@ class FactorizedAttentionBlock(nn.Module):
             channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
             augment_type='none')
         self.temporal_attention = RPEAttention(
-            channels=channels, num_heads=num_heads, relative_pos_buckets=relative_pos_buckets)
+            channels=channels, num_heads=num_heads,
+            relative_pos_buckets=relative_pos_buckets)
 
 
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
@@ -444,8 +445,9 @@ class RPEAttention(nn.Module):
         x = x.reshape(B*D, C, T)
         x = self.norm(x)
         x = x.view(B, D, C, T)
-        x = x.permute(0, 1, 3, 2)
-        qkv = self.qkv(x).reshape(B, D, T, 3, self.num_heads, C // self.num_heads).permute(3, 0, 1, 4, 2, 5)
+        x = th.einsum("BDCT -> BDTC", x) #BxDxTxC
+        qkv = self.qkv(x).reshape(B, D, T, 3, self.num_heads, C // self.num_heads)
+        qkv = th.einsum("DBTtHF -> tDBHTF", qkv)
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
         # q, k, v shapes: BxDxHxTx(C/H)
 
@@ -483,8 +485,10 @@ class RPEAttention(nn.Module):
         if self.rpe_v is not None:
             out += self.rpe_v(attn, pairwise_distances, mode="v")
 
-        x = out.transpose(-2, 3).reshape(B, D, T, C)
-        x = self.proj_out(x)
+        out = th.einsum("BDHTF -> BDTHF", out).reshape(B, D, T, C)
+        out = self.proj_out(out)
+        x = x + out
+        x = th.einsum("BDTC -> BDCT", x)
         return x, attn
 
 class UNetModel(nn.Module):
