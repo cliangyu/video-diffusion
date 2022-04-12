@@ -203,122 +203,6 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
-class AugmentedTransformer(nn.Module):
-    valid_augment_types = [
-        'none',
-        'add_presoftmax', 'add_presoftmax_time',
-        'add', 'add_time',
-        'mult', 'mult_time',
-        'add_manyhead_presoftmax', 'add_manyhead_presoftmax_time',
-        'add_manyhead', 'add_manyhead_time',
-        'mult_manyhead_presoftmax', 'mult_manyhead_presoftmax_time',
-        'mult_manyhead', 'mult_manyhead_time',
-    ]
-    compare = [
-        'add_manyhead_presoftmax_time',
-        'add_presoftmax_time',
-        'add_manyhead_presoftmax',
-        'add_manyhead_time',
-        'mult_manyhead_time',
-    ]
-
-    def __init__(self, channels, num_heads, time_embed_dim, use_checkpoint=False, augment_type='none'):
-        assert augment_type in self.valid_augment_types
-        super().__init__()
-        self.channels = channels
-        self.num_heads = num_heads
-        self.time_embed_dim = time_embed_dim
-        self.use_checkpoint = use_checkpoint
-        self.augment_type = augment_type
-        self.norm = normalization(channels)
-        self.qkv = conv_nd(1, channels, channels * 3, 1)
-        self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
-
-        # augmentation stuff
-        self.manyhead = 'manyhead' in augment_type
-        self.use_time = 'time' in augment_type
-        self.presoftmax = 'presoftmax' in augment_type
-        self.multiplicative = 'mult'  in augment_type
-        if not self.multiplicative:
-            assert 'add' in augment_type or augment_type == 'none'
-        # print("self.manyhead, self.use_time, self.presoftmax, self.multiplicative")
-        # print(self.manyhead, self.use_time, self.presoftmax, self.multiplicative)
-        if augment_type == 'none':
-            pass
-        else:
-            self.augment_layer1 = conv_nd(2, 3, channels, 1)
-            if self.use_time:
-                self.augment_layer2 = conv_nd(2, time_embed_dim, channels, 1)
-            self.augment_layer3 = conv_nd(2, channels, channels if self.manyhead else num_heads, 1)
-
-    def forward(self, x, temb, frame_indices, attn_mask=None, attn_weights_list=None):
-        out, attn = checkpoint(self._forward, (x, temb, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
-        if attn_weights_list is not None:
-            B, D, C, T = x.shape
-            attn_weights_list.append(attn.detach().view(B*D, -1, T, T).mean(dim=1).abs())
-        return out
-
-    def _forward(self, x, temb, frame_indices, attn_mask):
-        """
-        x - shape B x D x C x T - batch x D (e.g. spatial dimension along which temb, frame_indices and attn_mask don't vary)
-        temb - B x C x T (althout Tth dimension should all be the same)
-        frame_indices - B x T
-        attn_mask - B x T
-        """
-        B, D, C, T = x.shape
-        qkv = self.qkv(self.norm(x.reshape(B*D, C, T))).view(B, D, 3, C//self.num_heads, self.num_heads, T)
-        q, k, v = (qkv[:, :, i] for i in range(3))
-        _, _, channels_per_head, _, _ =  q.shape
-        scale = 1 / math.sqrt(math.sqrt(channels_per_head))
-        weight = th.einsum(
-            "bdcht,bdchs->bdhts", q * scale, k * scale  # BxHxTxT
-        )  # More stable with f16 than dividing afterwards
-
-        if self.augment_type != 'none':
-            # compute w_aug
-            relative = frame_indices.view(B, 1, 1, T) - frame_indices.view(B, 1, T, 1)  # BxTxTx1
-            relative = th.cat([
-                relative.float().clamp(min=0), (-relative).float().clamp(min=0), (relative == 0).float()
-            ], dim=1)
-            relative = th.log(1+relative)
-            emb = self.augment_layer1(relative)
-            if self.use_time:
-                emb = emb + self.augment_layer2(temb.view(B, -1, T, 1))   # B x C x T x T
-            w_aug = self.augment_layer3(th.relu(emb))   # BxCxTxT or BxHxTxT
-            if not self.manyhead:
-                w_aug = w_aug.repeat(1, channels_per_head, 1, 1)  # BxHxTxT
-            w_aug = w_aug.view(B, 1, C, T, T)
-
-        def softmax(w, attn_mask):
-            if attn_mask is not None:
-                inf_mask = (1-attn_mask)
-                inf_mask[inf_mask == 1] = th.inf
-                w = w - inf_mask.view(B, 1, 1, 1, T)  # BxDxCxTxT
-            return th.softmax(w.float(), dim=-1).type(w.dtype)
-
-        if self.augment_type == 'none':
-            weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-            h = th.einsum("bdhts,bdchs->bdcht", weight, v)
-            assert h.shape == (B, D, channels_per_head, self.num_heads, T)
-            h = h.reshape(B, D, C, T)
-        else:
-            weight = weight.repeat(1, 1, channels_per_head, 1, 1)  # BxDxCxTxT
-            if self.presoftmax:
-                weight = weight*w_aug if self.multiplicative else weight+w_aug
-                weight = softmax(weight, attn_mask)
-            else:
-                weight = softmax(weight, attn_mask)
-                weight = weight*w_aug if self.multiplicative else weight+w_aug
-                if attn_mask is not None:
-                    weight = weight * attn_mask.view(B, 1, 1, 1, T)
-            v = v.view(B, D, C, T)
-            h = th.einsum('bdcts,bdcs->bdct', weight, v)
-
-        assert h.shape == (B, D, C, T)
-        h = self.proj_out(h.view(B*D, C, T)).view(B, D, C, T)
-        return x.view(B, D, C, T) + h, weight
-
-
 class FactorizedAttentionBlock(nn.Module):
     """
     Loosely based on CSDI's factorized attention for time-series data.
@@ -326,9 +210,9 @@ class FactorizedAttentionBlock(nn.Module):
     """
     def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', relative_pos_buckets=None):
         super().__init__()
-        self.spatial_attention = AugmentedTransformer(
-            channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
-            augment_type='none')
+        self.spatial_attention = RPEAttention(
+            channels=channels, num_heads=num_heads,
+            use_rpe_q=False, use_rpe_k=False, use_rpe_v=False)
         self.temporal_attention = RPEAttention(
             channels=channels, num_heads=num_heads,
             relative_pos_buckets=relative_pos_buckets)
@@ -344,8 +228,9 @@ class FactorizedAttentionBlock(nn.Module):
                                     attn_mask=attn_mask.flatten(start_dim=2).squeeze(dim=2), # B x T
                                     attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
         x = x.view(B, H, W, C, T).permute(0, 4, 3, 1, 2)  # B, T, C, H, W
-        x = x.reshape(BT, 1, C, H*W)
-        x = self.spatial_attention(x, temb=None, frame_indices=None,
+        x = x.reshape(B, T, C, H*W)
+        x = self.spatial_attention(x,
+                                   frame_indices=None,
                                    attn_weights_list=None if attn_weights_list is None else attn_weights_list['spatial'])
         x = x.reshape(BT, C, H, W)
         return x
@@ -415,7 +300,8 @@ class RPEAttention(nn.Module):
     Attention with image relative position encoding
     '''
 
-    def __init__(self, channels, num_heads, relative_pos_buckets, use_checkpoint=False):
+    def __init__(self, channels, num_heads, relative_pos_buckets=None, use_checkpoint=False,
+                 use_rpe_q=True, use_rpe_k=True, use_rpe_v=True):
         super().__init__()
         self.num_heads = num_heads
         head_dim = channels // num_heads
@@ -428,10 +314,15 @@ class RPEAttention(nn.Module):
         self.norm = normalization(channels)
 
         # relative position encoding
-        self.rpe_q, self.rpe_k, self.rpe_v = \
-            [RPE(channels=channels,
-                 num_heads=num_heads,
-                 num_buckets=relative_pos_buckets) for _ in range(3)]
+        self.rpe_q = RPE(
+            channels=channels, num_heads=num_heads,
+            num_buckets=relative_pos_buckets) if use_rpe_q else None
+        self.rpe_k = RPE(
+            channels=channels, num_heads=num_heads,
+            num_buckets=relative_pos_buckets) if use_rpe_k else None
+        self.rpe_v = RPE(
+            channels=channels, num_heads=num_heads,
+            num_buckets=relative_pos_buckets) if use_rpe_v else None
 
     def forward(self, x, frame_indices, attn_mask=None, attn_weights_list=None):
         out, attn = checkpoint(self._forward, (x, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
@@ -447,7 +338,7 @@ class RPEAttention(nn.Module):
         x = x.view(B, D, C, T)
         x = th.einsum("BDCT -> BDTC", x) #BxDxTxC
         qkv = self.qkv(x).reshape(B, D, T, 3, self.num_heads, C // self.num_heads)
-        qkv = th.einsum("DBTtHF -> tDBHTF", qkv)
+        qkv = th.einsum("BDTtHF -> tBDHTF", qkv)
         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
         # q, k, v shapes: BxDxHxTx(C/H)
 
@@ -455,7 +346,8 @@ class RPEAttention(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) # BxDxHxTxT
 
-        pairwise_distances = (frame_indices.unsqueeze(-1) - frame_indices.unsqueeze(-2)) # BxTxT
+        if self.rpe_q is not None or self.rpe_k is not None or self.rpe_v is not None:
+            pairwise_distances = (frame_indices.unsqueeze(-1) - frame_indices.unsqueeze(-2)) # BxTxT
         # pairwise_distances[b, i, j] = frame_indices[b, i] - frame_indices[b, j]
         
         # w1 = self.rpe_k(q, pairwise_distances, mode="qk")
