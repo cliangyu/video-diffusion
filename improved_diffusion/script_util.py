@@ -45,6 +45,7 @@ def video_model_and_diffusion_defaults():
     defaults['do_cond_marg'] = True
     defaults['enforce_position_invariance'] = True
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
+    defaults['relative_pos_buckets'] = None
     return defaults
 
 
@@ -125,6 +126,7 @@ def create_video_model_and_diffusion(
     do_cond_marg,
     enforce_position_invariance,
     temporal_augment_type,
+    relative_pos_buckets
 ):
     model = create_video_model(
         T,
@@ -145,6 +147,7 @@ def create_video_model_and_diffusion(
         do_cond_marg=do_cond_marg,
         enforce_position_invariance=enforce_position_invariance,
         temporal_augment_type=temporal_augment_type,
+        relative_pos_buckets=relative_pos_buckets
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -223,7 +226,8 @@ def create_video_model(
     cross_frame_attention,
     do_cond_marg,
     enforce_position_invariance,
-    temporal_augment_type
+    temporal_augment_type,
+    relative_pos_buckets
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -259,6 +263,7 @@ def create_video_model(
         enforce_position_invariance=enforce_position_invariance,
         image_size=image_size,
         temporal_augment_type=temporal_augment_type,
+        relative_pos_buckets=relative_pos_buckets
     )
 
 

@@ -324,14 +324,13 @@ class FactorizedAttentionBlock(nn.Module):
     Loosely based on CSDI's factorized attention for time-series data.
     https://openreview.net/pdf?id=VzuIzbRDrum
     """
-    def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none'):
+    def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', relative_pos_buckets=None):
         super().__init__()
         self.spatial_attention = AugmentedTransformer(
             channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
             augment_type='none')
-        self.temporal_attention = AugmentedTransformer(
-            channels=channels, num_heads=num_heads, time_embed_dim=time_embed_dim,
-            augment_type=temporal_augment_type)
+        self.temporal_attention = RPEAttention(
+            channels=channels, num_heads=num_heads, relative_pos_buckets=relative_pos_buckets)
 
 
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
@@ -340,7 +339,6 @@ class FactorizedAttentionBlock(nn.Module):
         x = x.view(B, T, C, H, W).permute(0, 3, 4, 2, 1)  # B, H, W, C, T
         x = x.reshape(B, H*W, C, T)
         x = self.temporal_attention(x,
-                                    temb.view(B, T, -1).permute(0, 2, 1),  # B x C x T
                                     frame_indices,  # B x T
                                     attn_mask=attn_mask.flatten(start_dim=2).squeeze(dim=2), # B x T
                                     attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
@@ -352,56 +350,142 @@ class FactorizedAttentionBlock(nn.Module):
         return x
 
 
-# class QKVAttention(nn.Module):
-#     """
-#     A module which performs QKV attention.
-#     """
+class RPE(nn.Module):
+    # Based on https://github.com/microsoft/Cream/blob/6fb89a2f93d6d97d2c7df51d600fe8be37ff0db4/iRPE/DeiT-with-iRPE/rpe_vision_transformer.py
+    def __init__(self, channels, num_heads, num_buckets):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = channels // self.num_heads
+        self.num_buckets = num_buckets
+        self.max_bucket = th.tensor(self.num_buckets // 2)
+        self.min_bucket = self.max_bucket - self.num_buckets + 1
 
-#     def forward(self, qkv, attn_mask):
-#         """
-#         Apply QKV attention.
+        self.lookup_table_weight = nn.Parameter(
+            th.zeros(self.num_buckets,
+                     self.num_heads,
+                     self.head_dim))
+    
+    def forward(self, x, pairwise_distances, mode):
+        pairwise_distances = th.maximum(self.min_bucket, th.minimum(self.max_bucket, pairwise_distances))
+        # Any element of pairwise_distances is between self.min_bucket and self.max_bucket and is used to index the lookup table.
+        # Note that self.min_bucket is a negative number.
+        if mode == "qk":
+            return self.forward_qk(x, pairwise_distances)
+        elif mode == "v":
+            return self.forward_v(x, pairwise_distances)
+        else:
+            raise ValueError(f"Unexpected RPE attention mode: {mode}")
 
-#         :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
-#         :attn_mask: an [N x T] binary tensor denoting what may be attended to
-#         :return: an [N x C x T] tensor after attention.
-#         """
-#         n, ch3, t = qkv.shape
-#         ch = ch3 // 3
-#         q, k, v = th.split(qkv, ch, dim=1)
-#         scale = 1 / math.sqrt(math.sqrt(ch))
-#         weight = th.einsum(
-#             "bct,bcs->bts", q * scale, k * scale
-#         ).float()  # More stable with f16 than dividing afterwards
-#         if attn_mask is not None:
-#             inf_mask = (1-attn_mask)
-#             inf_mask[inf_mask == 1] = th.inf
-#             weight = weight - inf_mask.view(n, 1, t)
-#         weight = th.softmax(weight, dim=-1).type(weight.dtype)
-#         return th.einsum("bts,bcs->bct", weight, v), weight
+    def forward_qk(self, qk, pairwise_distances):
+        # qv is either of q or k and has shape BxDxHxTx(C/H)
+        # Output shape should be # BxDxHxTxT
+        # pairwise_distances: BxTxT
+        R = self.lookup_table_weight[pairwise_distances] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
+        return th.einsum(
+            "bdhtf,btshf->bdhts", qk, R  # BxDxHxTxT
+        )
 
-#     @staticmethod
-#     def count_flops(model, _x, y):
-#         """
-#         A counter for the `thop` package to count the operations in an
-#         attention operation.
+    def forward_v(self, attn, pairwise_distances):
+        # attn has shape BxDxHxTxT
+        # Output shape should be # BxDxHxYx(C/H)
+        # pairwise_distances: BxTxT
+        R = self.lookup_table_weight[pairwise_distances] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
+        th.einsum("bdhts,btshf->bdhtf", attn, R)
+        return th.einsum(
+            "bdhts,btshf->bdhtf", attn, R  # BxDxHxTxT
+        )
 
-#         Meant to be used like:
+    def forward_safe_qk(self, x, pairwise_distances):
+        R = self.lookup_table_weight[pairwise_distances] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
+        B, T, _, H, F = R.shape
+        D = x.shape[1]
+        res = x.new_zeros(B, D, H, T, T) # attn shape
+        for b in range(B):
+            for d in range(D):
+                for h in range(H):
+                    for i in range(T):
+                        for j in range(T):
+                            res[b, d, h, i, j] = x[b, d, h, i].dot(R[b, i, j, h])
+        return res
 
-#             macs, params = thop.profile(
-#                 model,
-#                 inputs=(inputs, timestamps),
-#                 custom_ops={QKVAttention: QKVAttention.count_flops},
-#             )
+class RPEAttention(nn.Module):
+    # Based on https://github.com/microsoft/Cream/blob/6fb89a2f93d6d97d2c7df51d600fe8be37ff0db4/iRPE/DeiT-with-iRPE/rpe_vision_transformer.py#L42
+    '''
+    Attention with image relative position encoding
+    '''
 
-#         """
-#         b, c, *spatial = y[0].shape
-#         num_spatial = int(np.prod(spatial))
-#         # We perform two matmuls with the same number of ops.
-#         # The first computes the weight matrix, the second computes
-#         # the combination of the value vectors.
-#         matmul_ops = 2 * b * (num_spatial ** 2) * c
-#         model.total_ops += th.DoubleTensor([matmul_ops])
+    def __init__(self, channels, num_heads, relative_pos_buckets, use_checkpoint=False):
+        super().__init__()
+        self.num_heads = num_heads
+        head_dim = channels // num_heads
+        # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+        self.scale = head_dim ** -0.5
+        self.use_checkpoint = use_checkpoint
 
+        self.qkv = nn.Linear(channels, channels * 3)
+        self.proj_out = zero_module(nn.Linear(channels, channels))
+        self.norm = normalization(channels)
+
+        # relative position encoding
+        self.rpe_q, self.rpe_k, self.rpe_v = \
+            [RPE(channels=channels,
+                 num_heads=num_heads,
+                 num_buckets=relative_pos_buckets) for _ in range(3)]
+
+    def forward(self, x, frame_indices, attn_mask=None, attn_weights_list=None):
+        out, attn = checkpoint(self._forward, (x, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
+        if attn_weights_list is not None:
+            B, D, C, T = x.shape
+            attn_weights_list.append(attn.detach().view(B*D, -1, T, T).mean(dim=1).abs())
+        return out
+    
+    def _forward(self, x, frame_indices, attn_mask):
+        B, D, C, T = x.shape
+        x = x.reshape(B*D, C, T)
+        x = self.norm(x)
+        x = x.view(B, D, C, T)
+        x = x.permute(0, 1, 3, 2)
+        qkv = self.qkv(x).reshape(B, D, T, 3, self.num_heads, C // self.num_heads).permute(3, 0, 1, 4, 2, 5)
+        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+        # q, k, v shapes: BxDxHxTx(C/H)
+
+        q *= self.scale
+
+        attn = (q @ k.transpose(-2, -1)) # BxDxHxTxT
+
+        pairwise_distances = (frame_indices.unsqueeze(-1) - frame_indices.unsqueeze(-2)) # BxTxT
+        # pairwise_distances[b, i, j] = frame_indices[b, i] - frame_indices[b, j]
+        
+        # w1 = self.rpe_k(q, pairwise_distances, mode="qk")
+        # w2 = self.rpe_k.forward_safe_qk(q, pairwise_distances)
+        # assert th.abs(w2 - w1).max() < 1e-6
+
+        # image relative position on keys
+        if self.rpe_k is not None:
+            attn += self.rpe_k(q, pairwise_distances, mode="qk")
+
+        # image relative position on queries
+        if self.rpe_q is not None:
+            attn += self.rpe_q(k * self.scale, pairwise_distances, mode="qk").transpose(-1, -2)
+
+        def softmax(w, attn_mask):
+            if attn_mask is not None:
+                inf_mask = (1-attn_mask)
+                inf_mask[inf_mask == 1] = th.inf
+                w = w - inf_mask.view(B, 1, 1, 1, T)  # BxDxHxTxT
+            return th.softmax(w.float(), dim=-1).type(w.dtype)
+
+        attn = softmax(attn, attn_mask)
+
+        out = attn @ v
+
+        # image relative position on values
+        if self.rpe_v is not None:
+            out += self.rpe_v(attn, pairwise_distances, mode="v")
+
+        x = out.transpose(-2, 3).reshape(B, D, T, C)
+        x = self.proj_out(x)
+        return x, attn
 
 class UNetModel(nn.Module):
     """
@@ -445,6 +529,7 @@ class UNetModel(nn.Module):
         use_spatial_encoding=False,
         image_size=None,
         temporal_augment_type=None,
+        relative_pos_buckets=None,
     ):
         super().__init__()
 
@@ -506,7 +591,8 @@ class UNetModel(nn.Module):
                 if ds in attention_resolutions:
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
-                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type)
+                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
+                                                 relative_pos_buckets=relative_pos_buckets)
                     )
                 self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
@@ -541,7 +627,8 @@ class UNetModel(nn.Module):
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
             FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
-                                     use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type),
+                                     use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
+                                     relative_pos_buckets=relative_pos_buckets),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -570,7 +657,8 @@ class UNetModel(nn.Module):
                 if ds in attention_resolutions:
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
-                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type),
+                                                 use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
+                                                 relative_pos_buckets=relative_pos_buckets),
                     )
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))

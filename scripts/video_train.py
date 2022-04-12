@@ -29,10 +29,14 @@ if "--unobserve" in sys.argv:
 def main():
     args = create_argparser().parse_args()
 
-    default_T = default_T_dict[args.dataset]
+    video_length = default_T_dict[args.dataset]
+    default_T = video_length
     default_image_size = default_image_size_dict[args.dataset]
     args.T = default_T if args.T == -1 else args.T
     args.image_size = default_image_size
+    if args.relative_pos_buckets is None:
+        args.relative_pos_buckets = video_length
+    args.relative_pos_buckets = int(args.relative_pos_buckets)
 
     dist_util.setup_dist()
     logger.configure(
