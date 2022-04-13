@@ -34,9 +34,14 @@ def main():
     default_image_size = default_image_size_dict[args.dataset]
     args.T = default_T if args.T == -1 else args.T
     args.image_size = default_image_size
-    if args.relative_pos_buckets is None:
-        args.relative_pos_buckets = video_length * 2
-    args.relative_pos_buckets = int(args.relative_pos_buckets)
+    if args.rp_alpha is None:
+        assert args.rp_beta is None
+        args.rp_alpha = args.rp_beta = args.rp_gamma = video_length * 2
+    assert args.rp_alpha is not None and args.rp_beta is not None and args.rp_gamma is not None
+    args.rp_alpha = int(args.rp_alpha)
+    args.rp_beta = int(args.rp_beta)
+    args.rp_gamma = int(args.rp_gamma)
+    assert args.rp_beta >= args.rp_alpha
 
     dist_util.setup_dist()
     logger.configure(

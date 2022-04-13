@@ -208,14 +208,14 @@ class FactorizedAttentionBlock(nn.Module):
     Loosely based on CSDI's factorized attention for time-series data.
     https://openreview.net/pdf?id=VzuIzbRDrum
     """
-    def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', relative_pos_buckets=None):
+    def __init__(self, channels, num_heads=1, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', bucket_params=None):
         super().__init__()
         self.spatial_attention = RPEAttention(
             channels=channels, num_heads=num_heads,
             use_rpe_q=False, use_rpe_k=False, use_rpe_v=False)
         self.temporal_attention = RPEAttention(
             channels=channels, num_heads=num_heads,
-            relative_pos_buckets=relative_pos_buckets)
+            bucket_params=bucket_params)
 
 
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
@@ -238,44 +238,59 @@ class FactorizedAttentionBlock(nn.Module):
 
 class RPE(nn.Module):
     # Based on https://github.com/microsoft/Cream/blob/6fb89a2f93d6d97d2c7df51d600fe8be37ff0db4/iRPE/DeiT-with-iRPE/rpe_vision_transformer.py
-    def __init__(self, channels, num_heads, num_buckets):
+    def __init__(self, channels, num_heads, bucket_params):
+        """ This module handles the relative positional encoding.
+
+        Args:
+            channels (int): Number of input channels.
+            num_heads (int): Number of attention heads.
+            bucket_params (dict): Parameters for the buckets. It should be a dictionary with
+                the keys ["alpha", "beta", "gamma"] as defined in eq. 18 of https://arxiv.org/pdf/2107.14222.pdf
+        """
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = channels // self.num_heads
-        self.num_buckets = num_buckets
-        self.max_bucket = th.tensor(self.num_buckets // 2)
-        self.min_bucket = self.max_bucket - self.num_buckets + 1
+        self.alpha = bucket_params["alpha"]
+        self.beta = bucket_params["beta"]
+        self.gamma = bucket_params["gamma"]
 
         self.lookup_table_weight = nn.Parameter(
-            th.zeros(self.num_buckets,
+            th.zeros(2 * self.beta + 1,
                      self.num_heads,
                      self.head_dim))
+
+    def get_bucket_ids(self, pairwise_distances):
+        # Based on Eq. 18 of https://arxiv.org/pdf/2107.14222.pdf
+        bucket_ids = pairwise_distances.clone()
+        mask = bucket_ids.abs() > self.alpha
+        if mask.sum() > 0:
+            coef = th.log(bucket_ids[mask].abs() / self.alpha) / np.log(self.gamma / self.alpha)
+            bucket_ids[mask] = th.minimum(th.tensor(self.beta), self.alpha + coef * (self.beta - self.alpha)).int() * th.sign(bucket_ids[mask])
+        return bucket_ids
     
     def forward(self, x, pairwise_distances, mode):
-        pairwise_distances = th.maximum(self.min_bucket, th.minimum(self.max_bucket, pairwise_distances))
-        # Any element of pairwise_distances is between self.min_bucket and self.max_bucket and is used to index the lookup table.
-        # Note that self.min_bucket is a negative number.
+        bucket_ids = self.get_bucket_ids(pairwise_distances)
         if mode == "qk":
-            return self.forward_qk(x, pairwise_distances)
+            return self.forward_qk(x, bucket_ids)
         elif mode == "v":
-            return self.forward_v(x, pairwise_distances)
+            return self.forward_v(x, bucket_ids)
         else:
             raise ValueError(f"Unexpected RPE attention mode: {mode}")
 
-    def forward_qk(self, qk, pairwise_distances):
+    def forward_qk(self, qk, bucket_ids):
         # qv is either of q or k and has shape BxDxHxTx(C/H)
         # Output shape should be # BxDxHxTxT
-        # pairwise_distances: BxTxT
-        R = self.lookup_table_weight[pairwise_distances] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
+        # bucket_ids: BxTxT
+        R = self.lookup_table_weight[bucket_ids] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
         return th.einsum(
             "bdhtf,btshf->bdhts", qk, R  # BxDxHxTxT
         )
 
-    def forward_v(self, attn, pairwise_distances):
+    def forward_v(self, attn, bucket_ids):
         # attn has shape BxDxHxTxT
         # Output shape should be # BxDxHxYx(C/H)
-        # pairwise_distances: BxTxT
-        R = self.lookup_table_weight[pairwise_distances] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
+        # bucket_ids: BxTxT
+        R = self.lookup_table_weight[bucket_ids] # BxTxTxHx(C/H)  # See Eq. 16 in https://arxiv.org/pdf/2107.14222.pdf
         th.einsum("bdhts,btshf->bdhtf", attn, R)
         return th.einsum(
             "bdhts,btshf->bdhtf", attn, R  # BxDxHxTxT
@@ -300,7 +315,8 @@ class RPEAttention(nn.Module):
     Attention with image relative position encoding
     '''
 
-    def __init__(self, channels, num_heads, relative_pos_buckets=None, use_checkpoint=False,
+    def __init__(self, channels, num_heads, use_checkpoint=False,
+                 bucket_params=None,
                  use_rpe_q=True, use_rpe_k=True, use_rpe_v=True):
         super().__init__()
         self.num_heads = num_heads
@@ -313,16 +329,20 @@ class RPEAttention(nn.Module):
         self.proj_out = zero_module(nn.Linear(channels, channels))
         self.norm = normalization(channels)
 
+        if use_rpe_q or use_rpe_k or use_rpe_v:
+            assert bucket_params is not None
+            assert "alpha" in bucket_params and "beta" in bucket_params and "gamma" in bucket_params
+
         # relative position encoding
         self.rpe_q = RPE(
             channels=channels, num_heads=num_heads,
-            num_buckets=relative_pos_buckets) if use_rpe_q else None
+            bucket_params=bucket_params) if use_rpe_q else None
         self.rpe_k = RPE(
             channels=channels, num_heads=num_heads,
-            num_buckets=relative_pos_buckets) if use_rpe_k else None
+            bucket_params=bucket_params) if use_rpe_k else None
         self.rpe_v = RPE(
             channels=channels, num_heads=num_heads,
-            num_buckets=relative_pos_buckets) if use_rpe_v else None
+            bucket_params=bucket_params) if use_rpe_v else None
 
     def forward(self, x, frame_indices, attn_mask=None, attn_weights_list=None):
         out, attn = checkpoint(self._forward, (x, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
@@ -425,7 +445,7 @@ class UNetModel(nn.Module):
         use_spatial_encoding=False,
         image_size=None,
         temporal_augment_type=None,
-        relative_pos_buckets=None,
+        bucket_params=None,
     ):
         super().__init__()
 
@@ -488,7 +508,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
                                                  use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                                 relative_pos_buckets=relative_pos_buckets)
+                                                 bucket_params=bucket_params)
                     )
                 self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
@@ -524,7 +544,7 @@ class UNetModel(nn.Module):
             ),
             FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
                                      use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                     relative_pos_buckets=relative_pos_buckets),
+                                     bucket_params=bucket_params),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -554,7 +574,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, time_embed_dim=time_embed_dim,
                                                  use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                                 relative_pos_buckets=relative_pos_buckets),
+                                                 bucket_params=bucket_params),
                     )
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))

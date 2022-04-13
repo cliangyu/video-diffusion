@@ -45,7 +45,9 @@ def video_model_and_diffusion_defaults():
     defaults['do_cond_marg'] = True
     defaults['enforce_position_invariance'] = True
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
-    defaults['relative_pos_buckets'] = None
+    defaults['rp_alpha'] = None
+    defaults['rp_beta'] = None
+    defaults['rp_gamma'] = None
     return defaults
 
 
@@ -126,7 +128,9 @@ def create_video_model_and_diffusion(
     do_cond_marg,
     enforce_position_invariance,
     temporal_augment_type,
-    relative_pos_buckets
+    rp_alpha,
+    rp_beta,
+    rp_gamma
 ):
     model = create_video_model(
         T,
@@ -147,7 +151,9 @@ def create_video_model_and_diffusion(
         do_cond_marg=do_cond_marg,
         enforce_position_invariance=enforce_position_invariance,
         temporal_augment_type=temporal_augment_type,
-        relative_pos_buckets=relative_pos_buckets
+        rp_alpha=rp_alpha,
+        rp_beta=rp_beta,
+        rp_gamma=rp_gamma
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -227,7 +233,9 @@ def create_video_model(
     do_cond_marg,
     enforce_position_invariance,
     temporal_augment_type,
-    relative_pos_buckets
+    rp_alpha,           # Alpha parameter of RPE attention
+    rp_beta,            # Beta parameter of RPE attention
+    rp_gamma,           # Gamma parameter of RPE attention
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -241,6 +249,11 @@ def create_video_model(
     attention_ds = []
     for res in attention_resolutions.split(","):
         attention_ds.append(image_size // int(res))
+
+    if any([rp_alpha, rp_beta, rp_gamma]):
+        bucket_params = dict(alpha=rp_alpha, beta=rp_beta, gamma=rp_gamma)
+    else:
+        bucket_params = None
 
     ModelClass = CondMargVideoModel if do_cond_marg else UNetVideoModel
     return ModelClass(
@@ -263,7 +276,7 @@ def create_video_model(
         enforce_position_invariance=enforce_position_invariance,
         image_size=image_size,
         temporal_augment_type=temporal_augment_type,
-        relative_pos_buckets=relative_pos_buckets
+        bucket_params=bucket_params
     )
 
 
