@@ -36,7 +36,7 @@ def main():
     args.image_size = default_image_size
     if args.rp_alpha is None:
         assert args.rp_beta is None
-        args.rp_alpha = args.rp_beta = args.rp_gamma = video_length * 2
+        args.rp_alpha = args.rp_beta = args.rp_gamma = video_length
     assert args.rp_alpha is not None and args.rp_beta is not None and args.rp_gamma is not None
     args.rp_alpha = int(args.rp_alpha)
     args.rp_beta = int(args.rp_beta)
