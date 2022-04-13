@@ -45,6 +45,7 @@ def video_model_and_diffusion_defaults():
     defaults['do_cond_marg'] = True
     defaults['enforce_position_invariance'] = True
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
+    defaults['use_rpe_net'] = False
     defaults['rp_alpha'] = None
     defaults['rp_beta'] = None
     defaults['rp_gamma'] = None
@@ -128,6 +129,7 @@ def create_video_model_and_diffusion(
     do_cond_marg,
     enforce_position_invariance,
     temporal_augment_type,
+    use_rpe_net,
     rp_alpha,
     rp_beta,
     rp_gamma
@@ -151,6 +153,7 @@ def create_video_model_and_diffusion(
         do_cond_marg=do_cond_marg,
         enforce_position_invariance=enforce_position_invariance,
         temporal_augment_type=temporal_augment_type,
+        use_rpe_net=use_rpe_net,
         rp_alpha=rp_alpha,
         rp_beta=rp_beta,
         rp_gamma=rp_gamma
@@ -233,6 +236,7 @@ def create_video_model(
     do_cond_marg,
     enforce_position_invariance,
     temporal_augment_type,
+    use_rpe_net,
     rp_alpha,           # Alpha parameter of RPE attention
     rp_beta,            # Beta parameter of RPE attention
     rp_gamma,           # Gamma parameter of RPE attention
@@ -276,6 +280,7 @@ def create_video_model(
         enforce_position_invariance=enforce_position_invariance,
         image_size=image_size,
         temporal_augment_type=temporal_augment_type,
+        use_rpe_net=use_rpe_net,
         bucket_params=bucket_params
     )
 
