@@ -230,8 +230,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
-        sample_idx_list = range(args.num_samples) if args.sample_idx is None else [args.sample_idx]
-        for sample_idx in sample_idx_list:
+        for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
             output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
@@ -283,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument("--subset_size", type=int, default=None,
                         help="If not None, only use a subset of the dataset. Defaults to the whole dataset.")
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
-    parser.add_argument("--sample_idx", type=int, default=None, help="An index for the generated sample. If this option is used, --num_samples is ignored.")
+    parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
