@@ -122,7 +122,7 @@ def create_argparser():
         max_frames=10,
         save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
-        mask_distribution="differently-spaced-groups",   # can also do consecutive-groups
+        mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}"
         just_visualise=False,
         num_workers=1
     )

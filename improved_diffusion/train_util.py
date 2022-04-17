@@ -221,16 +221,25 @@ class TrainLoop:
         B, T, *_ = batch.shape
         masks = {k: th.zeros_like(batch[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
         for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]):
-            latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
-            while True:
-                mask_i = th.distributions.Categorical(probs=p_observed_latent_marg).sample()
-                mask = [obs_row, latent_row, marg_row][mask_i]
-                indices = th.tensor(self.sample_some_indices(max_indices=N, T=T))
-                taken = (obs_row[indices] + latent_row[indices] + marg_row[indices]).view(-1)
-                indices = indices[taken == 0]  # remove indices that are already used in a mask
-                if len(indices) > N - sum(obs_row) - sum(latent_row) - sum(marg_row):
-                    break
-                mask[indices] = 1.
+            if 'autoregressive' in self.mask_distribution:
+                n_obs = int(self.mask_distribution.split('-')[1])
+                n_latent = self.max_frames - n_obs
+                start_i = th.randint(low=0, high=T-self.max_frames+1, size=())
+                obs_row[start_i:start_i+n_obs] = 1.
+                latent_row[start_i+n_obs:start_i+n_obs+n_latent] = 1.
+            elif 'groups' in self.mask_distribution:
+                latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
+                while True:
+                    mask_i = th.distributions.Categorical(probs=p_observed_latent_marg).sample()
+                    mask = [obs_row, latent_row, marg_row][mask_i]
+                    indices = th.tensor(self.sample_some_indices(max_indices=N, T=T))
+                    taken = (obs_row[indices] + latent_row[indices] + marg_row[indices]).view(-1)
+                    indices = indices[taken == 0]  # remove indices that are already used in a mask
+                    if len(indices) > N - sum(obs_row) - sum(latent_row) - sum(marg_row):
+                        break
+                    mask[indices] = 1.
+            else:
+                raise NotImplementedError
         if len(set_masks['obs']) > 0:
             for k in masks:
                 set_values = set_masks[k]
