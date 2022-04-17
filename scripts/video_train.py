@@ -90,6 +90,7 @@ def main():
         max_frames=args.max_frames,
         T=args.T,
         mask_distribution=args.mask_distribution,
+        pad_with_random_frames=args.pad_with_random_frames,
         args=args,
     )
     if args.just_visualise:
@@ -124,7 +125,8 @@ def create_argparser():
         resume_id="",
         mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}"
         just_visualise=False,
-        num_workers=1
+        num_workers=1,
+        pad_with_random_frames=True,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

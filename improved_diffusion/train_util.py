@@ -60,6 +60,7 @@ class TrainLoop:
         max_frames=10,
         n_interesting_masks=3,
         mask_distribution="differently-spaced-groups",
+        pad_with_random_frames=True,
         args=None
     ):
         assert args is not None
@@ -137,6 +138,7 @@ class TrainLoop:
         self.n_valid_repeats = n_valid_repeats
         self.n_interesting_masks = n_interesting_masks
         self.mask_distribution = mask_distribution
+        self.pad_with_random_frames = pad_with_random_frames
         with RNG(0):
             self.valid_batches = [next(self.data)[0][:self.valid_microbatch]
                                   for i in range(self.n_valid_batches)]
@@ -215,11 +217,11 @@ class TrainLoop:
             print('warning: sampled indices', [int(pos+i*scale) for i in range(s)], 'trying again')
             return self.sample_some_indices(max_indices, T)
 
-    def sample_all_masks(self, batch, gather=True, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
+    def sample_all_masks(self, batch1, batch2=None, gather=True, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
         p_observed_latent_marg = th.tensor([0.33, 0.33, 0.33] if self.do_inefficient_marg else [0.5, 0.5, 0])
         N = self.max_frames
-        B, T, *_ = batch.shape
-        masks = {k: th.zeros_like(batch[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
+        B, T, *_ = batch1.shape
+        masks = {k: th.zeros_like(batch1[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
         for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]):
             if 'autoregressive' in self.mask_distribution:
                 n_obs = int(self.mask_distribution.split('-')[1])
@@ -247,29 +249,36 @@ class TrainLoop:
                 masks[k][:n_set] = set_values[:n_set]
         represented_mask = (masks['obs'] + masks['latent'] + masks['kinda_marg']).clip(max=1)
         if not gather:
-            return batch, masks['obs'], masks['latent'], masks['kinda_marg']
-        represented_mask, (batch, obs_mask, latent_mask, kinda_marg_mask), frame_indices =\
+            return batch1, masks['obs'], masks['latent'], masks['kinda_marg']
+        represented_mask, batch, (obs_mask, latent_mask, kinda_marg_mask), frame_indices =\
             self.gather_unmasked_elements(
-                represented_mask, (batch, masks['obs'], masks['latent'], masks['kinda_marg'])
+                represented_mask, batch1, batch2, (masks['obs'], masks['latent'], masks['kinda_marg'])
             )
         return batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask
 
-    def gather_unmasked_elements(self, mask, tensors):
+    def gather_unmasked_elements(self, mask, batch1, batch2, tensors):
         B, T, *_ = mask.shape
         mask = mask.view(B, T)  # remove unit C, H, W dims
-        effective_T = mask.sum(dim=1).max().int()
+        effective_T = self.max_frames if self.pad_with_random_frames else mask.sum(dim=1).max().int()
         new_mask = th.zeros_like(mask[:, :effective_T])
         indices = th.zeros_like(mask[:, :effective_T], dtype=th.int64)
+        new_batch = th.zeros_like(batch1[:, :effective_T])
         new_tensors = [th.zeros_like(t[:, :effective_T]) for t in tensors]
         for b in range(B):
             instance_T = mask[b].sum().int()
             new_mask[b, :instance_T] = 1
             indices[b, :instance_T] = mask[b].nonzero().flatten()
+            # select random frames in case we are doing padding with single frames
+            indices[b, instance_T:] = th.randint_like(indices[b, instance_T:], high=T) if self.pad_with_random_frames else 0
+            new_batch[b, :instance_T] = batch1[b][mask[b]==1]
+            new_batch[b, instance_T:] = (batch1 if batch2 is None else batch2)[b][indices[b, instance_T:]]
             for new_t, t in zip(new_tensors, tensors):
                 new_t[b, :instance_T] = t[b][mask[b]==1]
-        return new_mask.view(B, effective_T, 1, 1, 1), new_tensors, indices
+                new_t[b, instance_T:] = t[b][indices[b, instance_T:]]
+        return new_mask.view(B, effective_T, 1, 1, 1), new_batch, new_tensors, indices
 
     def run_loop(self):
+        gather_and_log_videos('data/', next(self.data)[0], log_as='both')
         last_sample_time = time()
         while (
             not self.lr_anneal_steps
@@ -277,9 +286,7 @@ class TrainLoop:
         ):
 
             t_0 = time()
-            batch, cond = next(self.data)
-
-            self.run_step(batch, cond)
+            self.run_step()
             logger.logkv("timing/step_time", time() - t_0)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
@@ -293,42 +300,46 @@ class TrainLoop:
                 logger.logkv('timing/time_between_samples', time()-last_sample_time)
                 last_sample_time = time()
             self.step += 1
-            if self.step == 1:
-                gather_and_log_videos('data/', batch, log_as='both')
-                assert len(batch[0]) == self.T
         # Save the last checkpoint if it wasn't already saved.
         if (self.step - 1) % self.save_interval != 0:
             self.save()
 
-    def run_step(self, batch, cond):
-        self.forward_backward(batch, cond)
+    def run_step(self):
+        self.forward_backward()
         if self.use_fp16:
             self.optimize_fp16()
         else:
             self.optimize_normal()
         self.log_step()
 
-    def forward_backward(self, batch, cond):
+    def forward_backward(self):
         zero_grad(self.model_params)
-        for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i:i + self.microbatch].to(dist_util.dev())
-            micro, frame_indices, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(micro)
-            micro_cond = {
-                k: v[i:i+self.microbatch].to(dist_util.dev())
-                for k, v in cond.items()
-            }
-            last_batch = (i + self.microbatch) >= batch.shape[0]
+        batch1 = next(self.data)[0]
+        batch2 = next(self.data)[0] if self.pad_with_random_frames else None
+        for i in range(0, batch1.shape[0], self.microbatch):
+            micro1 = batch1[i:i + self.microbatch]
+            micro2 = batch2[i:i + self.microbatch] if batch2 is not None else None
+            micro, frame_indices, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(micro1, micro2)
+            micro = micro.to(dist_util.dev())
+            frame_indices = frame_indices.to(dist_util.dev())
+            obs_mask = obs_mask.to(dist_util.dev())
+            latent_mask = latent_mask.to(dist_util.dev())
+            kinda_marg_mask = kinda_marg_mask.to(dist_util.dev())
+
+            last_batch = (i + self.microbatch) >= batch1.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
 
+            loss_mask = (1-obs_mask-kinda_marg_mask) if self.pad_with_random_frames else latent_mask
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
                 self.ddp_model,
                 micro,
                 t,
-                model_kwargs={**micro_cond, 'frame_indices': frame_indices, 'obs_mask': obs_mask,
+                model_kwargs={'frame_indices': frame_indices, 'obs_mask': obs_mask,
                               'latent_mask': latent_mask, 'kinda_marg_mask': kinda_marg_mask,
                               'x0': micro},
-                latent_mask=latent_mask,
+                latent_mask=loss_mask,
+                eval_mask=latent_mask,
             )
 
             if last_batch or not self.use_ddp:
