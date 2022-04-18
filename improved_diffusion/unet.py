@@ -428,9 +428,12 @@ class RPEAttention(nn.Module):
 
         def softmax(w, attn_mask):
             if attn_mask is not None:
-                inf_mask = (1-attn_mask)
+                allowed_interactions = attn_mask.view(B, 1, T) * attn_mask.view(B, T, 1)  # locations in video attend to all other locations in video
+                # allowed_interactions[:, range(T), range(T)] = 1.
+                allowed_interactions += (1-attn_mask.view(B, 1, T)) * (1-attn_mask.view(B, T, 1))
+                inf_mask = (1-allowed_interactions)
                 inf_mask[inf_mask == 1] = th.inf
-                w = w - inf_mask.view(B, 1, 1, 1, T)  # BxDxHxTxT
+                w = w - inf_mask.view(B, 1, 1, T, T)  # BxDxHxTxT
             return th.softmax(w.float(), dim=-1).type(w.dtype)
 
         attn = softmax(attn, attn_mask)
@@ -788,7 +791,7 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                    dim=2)
         attn_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
         out, attn = super().forward(x, attn_mask=attn_mask, **kwargs)
-        return out*latent_mask, attn
+        return out, attn
 
 
 class SuperResModel(UNetModel):
