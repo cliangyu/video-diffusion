@@ -1,6 +1,7 @@
 import copy
 import functools
 import os
+from pathlib import Path
 
 import shutil
 import glob
@@ -389,6 +390,10 @@ class TrainLoop:
     def save(self):
         postfix = "latest" if self._args.save_latest_only else f"{(self.step):06d}"
         to_save = {bf.join(get_blob_logdir(), f"opt_{postfix}.pt"): self.opt.state_dict()}
+
+        # vmnote: make dir if it doesn't exist
+        Path(get_blob_logdir()).mkdir(parents=True, exist_ok=True)
+
         for rate, params in zip([0, *self.ema_rate],
                                 [self.master_params, *self.ema_params]):
             filename = f"ema_{rate}_{postfix}.pt" if rate else f"model_{postfix}.pt"
@@ -463,10 +468,14 @@ class TrainLoop:
         sample_fn = (
             self.diffusion.p_sample_loop
         )
+
+
         def repeat(t):
             return th.repeat_interleave(t, repeats=self.n_valid_repeats, dim=0)
+
         batch, orig_batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask = map(
             repeat, [batch, orig_batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])
+
         samples = []
         attns = []
         def chunk(t):
