@@ -797,24 +797,24 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
     def forward(self, x, x0, obs_mask, latent_mask, kinda_marg_mask, timesteps, **kwargs):
         B, T, C, H, W = x.shape
         timesteps = timesteps.view(B, 1).expand(B, T)
+        anything_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
         if self.cond_emb_type == 'channel':
             indicator_template = th.ones_like(x[:, :, :1, :, :])
             obs_indicator = indicator_template * obs_mask
             kinda_marg_indicator = indicator_template * kinda_marg_mask
-            x = th.cat([x*latent_mask + x0*obs_mask,
+            x = th.cat([x*latent_mask + x0*obs_mask + x*(1-anything_mask),
                         obs_indicator,
                         kinda_marg_indicator],
                        dim=2)
         elif self.cond_emb_type in ['duplicate', 'all']:
-            x = th.cat([x*latent_mask,
+            x = th.cat([x*latent_mask + x*(1-anything_mask),
                         x0*obs_mask],
                        dim=2)
         elif self.cond_emb_type in ['t=0', 'all']:
             timesteps[obs_mask.view(B, T) == 1] = -1  # TODO
         else:
             raise NotImplementedError
-        attn_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
-        out, attn = super().forward(x, timesteps=timesteps, attn_mask=attn_mask, **kwargs)
+        out, attn = super().forward(x, timesteps=timesteps, attn_mask=anything_mask, **kwargs)
         return out, attn
 
 
