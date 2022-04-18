@@ -753,7 +753,7 @@ class UNetVideoModel(UNetModel):
         if frame_indices is None:
             frame_indices = th.arange(0, T, device=x.device).view(1, T).expand(B, T)
         x = x.view(B*T, C, H, W)
-        timesteps = timesteps.view(B, 1).expand(B, T).reshape(B*T)
+        timesteps = timesteps.reshape(B*T)
         out, attn = super().forward(
             x, timesteps, frame_indices=frame_indices,
             T=T if self.cross_frame_attention else 1, **kwargs
@@ -776,21 +776,45 @@ class UNetVideoModel(UNetModel):
 
 class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive similar class for image model
 
-    def __init__(self, **kwargs):
-        kwargs['in_channels'] += 2
+    def __init__(self,
+                 cond_emb_type,
+                 **kwargs):
+        if 'channel' in cond_emb_type:  # only thing for which kinda_marg works
+            kwargs['in_channels'] += 2
+        elif 'duplicate' in cond_emb_type or 'all' in cond_emb_type:
+            kwargs['in_channels'] *= 2
+        elif cond_emb_type == 't=0':
+            pass
+        else:
+            raise NotImplementedError
         super().__init__(**kwargs)
+        if cond_emb_type == 'channel-initzero':
+            self.input_blocks[0][0].weight.data[:, 3] = 0.
+        if cond_emb_type in ['duplicate-initzero', 'all-initzero']:
+            self.input_blocks[0][0].weight.data[:, 3:] = self.input_blocks[0][0].weight.data[:, :3]
+        self.cond_emb_type = cond_emb_type.replace('-initzero', '')
 
-    def forward(self, x, x0, obs_mask, latent_mask, kinda_marg_mask, **kwargs):
-        *leading_dims, C, H, W = x.shape
-        indicator_template = th.ones_like(x[:, :, :1, :, :])
-        obs_indicator = indicator_template * obs_mask
-        kinda_marg_indicator = indicator_template * kinda_marg_mask
-        x = th.cat([x*latent_mask + x0*obs_mask,
-                    obs_indicator,
-                    kinda_marg_indicator],
-                   dim=2)
+    def forward(self, x, x0, obs_mask, latent_mask, kinda_marg_mask, timesteps, **kwargs):
+        B, T, C, H, W = x.shape
+        timesteps = timesteps.view(B, 1).expand(B, T)
+        if self.cond_emb_type == 'channel':
+            indicator_template = th.ones_like(x[:, :, :1, :, :])
+            obs_indicator = indicator_template * obs_mask
+            kinda_marg_indicator = indicator_template * kinda_marg_mask
+            x = th.cat([x*latent_mask + x0*obs_mask,
+                        obs_indicator,
+                        kinda_marg_indicator],
+                       dim=2)
+        elif self.cond_emb_type in ['duplicate', 'all']:
+            x = th.cat([x*latent_mask,
+                        x0*obs_mask],
+                       dim=2)
+        elif self.cond_emb_type in ['t=0', 'all']:
+            timesteps[obs_mask.view(B, T) == 1] = -1  # TODO
+        else:
+            raise NotImplementedError
         attn_mask = (obs_mask + latent_mask + kinda_marg_mask).clip(max=1)
-        out, attn = super().forward(x, attn_mask=attn_mask, **kwargs)
+        out, attn = super().forward(x, timesteps=timesteps, attn_mask=attn_mask, **kwargs)
         return out, attn
 
 
