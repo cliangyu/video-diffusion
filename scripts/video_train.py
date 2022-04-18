@@ -26,8 +26,29 @@ if "--unobserve" in sys.argv:
         os.environ["MY_WANDB_DIR"] = os.environ["WANDB_DIR_DRYRUN"]
 
 
+def num_available_cores():
+    # Copied from pytorch source code https://pytorch.org/docs/stable/_modules/torch/utils/data/dataloader.html#DataLoader
+    max_num_worker_suggest = None
+    if hasattr(os, 'sched_getaffinity'):
+        try:
+            max_num_worker_suggest = len(os.sched_getaffinity(0))
+        except Exception:
+            pass
+    if max_num_worker_suggest is None:
+        # os.cpu_count() could return Optional[int]
+        # get cpu count first and check None in order to satify mypy check
+        cpu_count = os.cpu_count()
+        if cpu_count is not None:
+            max_num_worker_suggest = cpu_count
+    return max_num_worker_suggest or 1
+
+
 def main():
     args = create_argparser().parse_args()
+    if args.num_workers == -1:
+        # Set the number of workers automatically.
+        args.num_workers = max(num_available_cores() - 1, 1)
+        print(f"num_workers was not specified. It is automatically set to \"number of cores - 1\" = {args.num_workers}")
 
     video_length = default_T_dict[args.dataset]
     default_T = video_length
@@ -36,7 +57,7 @@ def main():
     args.image_size = default_image_size
     if args.rp_alpha is None:
         assert args.rp_beta is None
-        args.rp_alpha = args.rp_beta = args.rp_gamma = video_length
+        args.rp_alpha = args.rp_beta = args.rp_gamma = args.T
     assert args.rp_alpha is not None and args.rp_beta is not None and args.rp_gamma is not None
     args.rp_alpha = int(args.rp_alpha)
     args.rp_beta = int(args.rp_beta)
@@ -125,7 +146,7 @@ def create_argparser():
         resume_id="",
         mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}"
         just_visualise=False,
-        num_workers=1,
+        num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,
     )
     defaults.update(video_model_and_diffusion_defaults())
