@@ -46,6 +46,7 @@ def video_model_and_diffusion_defaults():
     defaults['enforce_position_invariance'] = True
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
     defaults['use_rpe_net'] = False
+    defaults['cond_emb_type'] = 'channel'   # channel, channel-initzero, duplicate, duplicate-initzero, or t=0
     defaults['rp_alpha'] = None
     defaults['rp_beta'] = None
     defaults['rp_gamma'] = None
@@ -132,7 +133,8 @@ def create_video_model_and_diffusion(
     use_rpe_net,
     rp_alpha,
     rp_beta,
-    rp_gamma
+    rp_gamma,
+    cond_emb_type,
 ):
     model = create_video_model(
         T,
@@ -156,7 +158,8 @@ def create_video_model_and_diffusion(
         use_rpe_net=use_rpe_net,
         rp_alpha=rp_alpha,
         rp_beta=rp_beta,
-        rp_gamma=rp_gamma
+        rp_gamma=rp_gamma,
+        cond_emb_type=cond_emb_type,
     )
     diffusion = create_gaussian_diffusion(
         steps=diffusion_steps,
@@ -240,6 +243,7 @@ def create_video_model(
     rp_alpha,           # Alpha parameter of RPE attention
     rp_beta,            # Beta parameter of RPE attention
     rp_gamma,           # Gamma parameter of RPE attention
+    cond_emb_type,
 ):
     if image_size == 256:
         channel_mult = (1, 1, 2, 2, 4, 4)
@@ -281,7 +285,8 @@ def create_video_model(
         image_size=image_size,
         temporal_augment_type=temporal_augment_type,
         use_rpe_net=use_rpe_net,
-        bucket_params=bucket_params
+        bucket_params=bucket_params,
+        cond_emb_type=cond_emb_type,
     )
 
 
