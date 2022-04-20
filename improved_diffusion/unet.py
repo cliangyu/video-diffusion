@@ -42,7 +42,7 @@ class TimestepEmbedAttnThingsSequential(nn.Sequential, TimestepBlock):
         for layer in self:
             kwargs = {}
             if isinstance(layer, TimestepBlock):
-                kwargs['emb'] = emb
+                kwargs['emb'] = emb # vmnote: 'emb' here is the timestep embedding
             elif isinstance(layer, FactorizedAttentionBlock):
                 kwargs['temb'] = emb
                 kwargs['attn_mask'] = attn_mask
@@ -110,6 +110,8 @@ class Downsample(nn.Module):
         return self.op(x)
 
 
+
+# Resblocks are a replacement for convolutional layers.
 class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
@@ -203,6 +205,7 @@ class ResBlock(TimestepBlock):
         return self.skip_connection(x) + h
 
 
+# vmnote: this is new, study it
 class FactorizedAttentionBlock(nn.Module):
     """
     Loosely based on CSDI's factorized attention for time-series data.
@@ -221,6 +224,7 @@ class FactorizedAttentionBlock(nn.Module):
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
         BT, C, H, W = x.shape
         B = BT//T
+        # reshape to have T in the last dimension becuase that's what we attend over
         x = x.view(B, T, C, H, W).permute(0, 3, 4, 2, 1)  # B, H, W, C, T
         x = x.reshape(B, H*W, C, T)
         x = self.temporal_attention(x,
@@ -228,6 +232,8 @@ class FactorizedAttentionBlock(nn.Module):
                                     frame_indices,  # B x T
                                     attn_mask=attn_mask.flatten(start_dim=2).squeeze(dim=2), # B x T
                                     attn_weights_list=None if attn_weights_list is None else attn_weights_list['temporal'],)
+
+        # Now we attend over the spatial dimensions by reshaping the input
         x = x.view(B, H, W, C, T).permute(0, 4, 3, 1, 2)  # B, T, C, H, W
         x = x.reshape(B, T, C, H*W)
         x = self.spatial_attention(x,
@@ -392,9 +398,9 @@ class RPEAttention(nn.Module):
         out, attn = checkpoint(self._forward, (x, temb, frame_indices, attn_mask), self.parameters(), self.use_checkpoint)
         if attn_weights_list is not None:
             B, D, C, T = x.shape
-            attn_weights_list.append(attn.detach().view(B*D, -1, T, T).mean(dim=1).abs())
+            attn_weights_list.append(attn.detach().view(B*D, -1, T, T).mean(dim=1).abs()) # this is for logging purposes to visualize attn weights
         return out
-    
+
     def _forward(self, x, temb, frame_indices, attn_mask):
         B, D, C, T = x.shape
         x = x.reshape(B*D, C, T)
@@ -413,7 +419,7 @@ class RPEAttention(nn.Module):
         if self.rpe_q is not None or self.rpe_k is not None or self.rpe_v is not None:
             pairwise_distances = (frame_indices.unsqueeze(-1) - frame_indices.unsqueeze(-2)) # BxTxT
         # pairwise_distances[b, i, j] = frame_indices[b, i] - frame_indices[b, j]
-        
+
         # w1 = self.rpe_k(q, pairwise_distances, mode="qk")
         # w2 = self.rpe_k.forward_safe_qk(q, pairwise_distances)
         # assert th.abs(w2 - w1).max() < 1e-6
@@ -574,6 +580,7 @@ class UNetModel(nn.Module):
 
         if use_spatial_encoding:
             first_attn_res = image_size // first_attn_ds
+            # vmnote: added by will to give the model information about spatial position of pixel within a frame. Note that this is differnet from timestep embeddings in tha this has learned parameters and isn't a function of i/j location, while timestep embeddings are deterministic transforms of diffustion step t
             self.spatial_encoding = nn.Parameter(
                 th.randn(1, first_attn_ch, first_attn_res, first_attn_res),
                 requires_grad=True
@@ -608,7 +615,7 @@ class UNetModel(nn.Module):
             for i in range(num_res_blocks + 1):
                 layers = [
                     ResBlock(
-                        ch + input_block_chans.pop(),
+                        ch + input_block_chans.pop(), # vmnote: different than input block
                         time_embed_dim,
                         dropout,
                         out_channels=model_channels * mult,
@@ -688,7 +695,7 @@ class UNetModel(nn.Module):
                 h = self.add_positional_encodings(h, frame_indices=frame_indices)
         h = self.middle_block(h, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
         for module in self.output_blocks:
-            cat_in = th.cat([h, hs.pop()], dim=1)
+            cat_in = th.cat([h, hs.pop()], dim=1) # vmnote: concatenation here is a skip connection
             h = module(cat_in, emb, attn_mask, T=T, attn_weights_list=attns, frame_indices=frame_indices)
         h = h.type(x.dtype)
         out = self.out(h)
