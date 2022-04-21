@@ -13,14 +13,43 @@ from skimage.metrics import peak_signal_noise_ratio as psnr_metric
 from skimage.metrics import structural_similarity as ssim_metric
 import lpips as lpips_metric
 from collections import defaultdict
+import tensorflow as tf
 
 from improved_diffusion.image_datasets import get_test_dataset
+import improved_diffusion.frechet_video_distance as fvd
+
+
+def compute_FVD(vid1, vid2):
+    # Batch has to be divisible by 16
+    assert vid1.shape[0] % 16 == 0 
+    assert vid2.shape[0] % 16 == 0
+    
+    # assert channel is last dimension
+    # and trust that shape is B, T, H, W, C
+    assert vid1.shape[4] == 3
+    assert vid2.shape[4] == 3
+    
+    with tf.compat.v1.Graph().as_default():
+        vid1 = tf.compat.v1.convert_to_tensor(vid1, np.uint8)
+        vid2 = tf.compat.v1.convert_to_tensor(vid2, np.uint8)
+        
+        result = fvd.calculate_fvd(
+            fvd.create_id3_embedding(fvd.preprocess(vid1,(224, 224))),
+            fvd.create_id3_embedding(fvd.preprocess(vid2,(224, 224)))
+        )
+
+        with tf.compat.v1.Session() as sess:
+            sess.run(tf.compat.v1.global_variables_initializer())
+            sess.run(tf.compat.v1.tables_initializer())
+            return sess.run(result)
 
 
 class LazyDataFetch:
     def __init__(self, dataset, samples_dir, obs_length, dataset_drange):
         self.obs_length = obs_length
-        filenames = [(x, [int(num) for num in x.stem.split("_")[-1].split("-")]) for x in Path(samples_dir).glob("sample_*.npy")]
+        samples_dir = Path(samples_dir)
+        assert samples_dir.exists()
+        filenames = [(x, [int(num) for num in x.stem.split("_")[-1].split("-")]) for x in samples_dir.glob("sample_*.npy")]
         # filenames has the following structure: [(filename, (video_idx, sample_idx))]
         filenames.sort(key=lambda x: x[1][0])
         self.filenames_dict = defaultdict(list)
@@ -34,6 +63,7 @@ class LazyDataFetch:
 
     def __getitem__(self, idx):
         # Returns a tuple of (gt video, [list of sampled videos])
+        # Each video has shape of TxCx3xHxW
         video_idx = self.keys[idx]
         filename_list = self.filenames_dict[video_idx]
         preds = [(np.load(filename) / 255.0).astype(np.float32) for filename in filename_list] # pred with pixel values in [0, 1]
@@ -93,6 +123,7 @@ def compute_metrics_lazy(data_fetch, T, num_samples, C=3):
     return {"ssim": ssim,
             "psnr": psnr}
 
+
 @torch.no_grad()
 def compute_lpips_lazy(data_fetch, T, num_samples, device="cuda"):
     num_videos = len(data_fetch)
@@ -111,11 +142,37 @@ def compute_lpips_lazy(data_fetch, T, num_samples, device="cuda"):
         preds = preds * 2 - 1
         # Convert to tensors on the correct device
         gt = torch.tensor(gt).to(device)
-        best_lpips = float("inf") * np.ones(T)
         for k, pred in enumerate(preds):
             pred = torch.tensor(pred).to(device)
             lpips[i, k, :] = loss_fn(gt, pred).flatten().cpu().numpy()
     return {"lpips": lpips}
+
+
+
+def compute_fvd_lazy(data_fetch, T, num_samples):
+    num_videos = len(data_fetch)
+    fvd = np.zeros((num_videos // 16, num_samples))
+    for i in tqdm(range(0, num_videos, 16)):
+        data = [data_fetch[j] for j in range(i, i+16)]
+        gt_batch = [x["gt"] for x in data]
+        preds_batch = [np.stack(x["preds"][:num_samples]) for x in data]
+        gt_batch = np.stack(gt_batch)[:, :T] # BxTxCxHxW
+        preds_batch = np.stack(preds_batch)[:, :, :T] # BxNxTxCxHxW
+        assert preds_batch.shape[1] == num_samples, f"Expected at least {num_samples} video prediction samples."
+        # Convert image pixels to bytes
+        gt_batch = (gt_batch * 255).astype("uint8")
+        preds_batch = (preds_batch * 255).astype("uint8")
+
+        gt_batch = np.moveaxis(gt_batch, 2, 4) # B, T, H, W, C
+        preds_batch = np.moveaxis(preds_batch, 3, 5) # B, T, H, W, C
+        # Convert to tensors on the correct device
+        for k in range(num_samples):
+            pred_batch = preds_batch[:, k]
+            print(pred_batch.shape, gt_batch.shape)
+            x = compute_FVD(pred_batch, gt_batch)
+            print(x)
+            fvd[i // 16, k] = x
+    return {"fvd": fvd}
 
 
 if __name__ == "__main__":
@@ -123,7 +180,7 @@ if __name__ == "__main__":
     parser.add_argument("--samples_dir", type=str, required=True)
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--modes", nargs="+", type=str, default=["all"],
-                        choices=["ssim", "psnr", "lpips", "all"])
+                        choices=["ssim", "psnr", "lpips", "fvd", "all"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--obs_length", type=int, required=True,
                         help="Number of observed frames.")
@@ -171,6 +228,11 @@ if __name__ == "__main__":
             num_samples=args.num_samples))
     if "lpips" in args.modes:
         new_metrics.update(compute_lpips_lazy(
+            data_fetch=data_fetch,
+            T=args.T,
+            num_samples=args.num_samples))
+    if "fvd" in args.modes:
+        new_metrics.update(compute_fvd_lazy(
             data_fetch=data_fetch,
             T=args.T,
             num_samples=args.num_samples))
