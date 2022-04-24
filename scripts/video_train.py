@@ -148,6 +148,7 @@ def create_argparser():
         just_visualise=False,
         num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,
+        fake_seed=1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
