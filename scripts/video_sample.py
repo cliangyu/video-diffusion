@@ -205,7 +205,7 @@ if __name__ == "__main__":
     model = model.to(args.device)
     model.eval()
     # Load the test set
-    dataset = get_test_dataset("minerl")#(dataset_name=model_args.dataset) # TODO: fix
+    dataset = get_test_dataset(dataset_name=model_args.dataset)
     if args.subset_size is not None:
         indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
         dataset = torch.utils.data.Subset(dataset, list(range(args.subset_size)))
