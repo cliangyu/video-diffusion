@@ -3,18 +3,18 @@ import numpy as np
 
 class InferenceStrategyBase:
     """ Inference strategies """
-    def __init__(self, video_length: int, num_obs: int, max_T: int, step_size: int):
+    def __init__(self, video_length: int, num_obs: int, max_frames: int, step_size: int):
         """ Inference strategy base class. It provides an iterator that returns
             the indices of the frames that should be observed and the frames that should be generated.
 
         Args:
             video_length (int): Length of the videos.
             num_obs (int): Number of frames that are observed from the beginning of the video.
-            max_T (int): Maximum number of frames (observed or latent) that can be passed to the model in one shot.
+            max_frames (int): Maximum number of frames (observed or latent) that can be passed to the model in one shot.
             step_size (int): Number of frames to generate in each step.
         """
         self._video_length = video_length
-        self._max_T = max_T
+        self._max_frames = max_frames
         self._done_frames = set(range(num_obs))
         self._obs_frames = list(range(num_obs))
         self._step_size = step_size
@@ -49,7 +49,7 @@ class Autoregressive(InferenceStrategyBase):
         super().__init__(*args, **kwargs)
         
     def next_indices(self):
-        obs_frame_indices = sorted(self._done_frames)[-(self._max_T - self._step_size):]
+        obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
         first_idx = obs_frame_indices[-1] + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
         return obs_frame_indices, latent_frame_indices
@@ -60,7 +60,7 @@ class Independent(InferenceStrategyBase):
         super().__init__(*args, **kwargs)
         
     def next_indices(self):
-        obs_frame_indices = sorted(self._obs_frames)[-(self._max_T - self._step_size):]
+        obs_frame_indices = sorted(self._obs_frames)[-(self._max_frames - self._step_size):]
         first_idx = max(self._done_frames) + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
         return obs_frame_indices, latent_frame_indices
@@ -75,8 +75,9 @@ class ExpPast(InferenceStrategyBase):
         distances_past = 2**np.arange(int(np.log2(cur_idx))) # distances from the observed frames (all in the past)
         obs_frame_indices = list(cur_idx - distances_past)
         latent_frame_indices = list(range(cur_idx, cur_idx + min(self._step_size, self._video_length)))
+        # Observe more consecutive frames from the past if there is space left to reach max_frames.
         for i in range(1, cur_idx + 1):
-            if len(obs_frame_indices) + len(latent_frame_indices) >= self._max_T:
+            if len(obs_frame_indices) + len(latent_frame_indices) >= self._max_frames:
                 break
             if cur_idx - i not in obs_frame_indices:
                 obs_frame_indices.append(cur_idx - i)
@@ -88,7 +89,7 @@ class MixedAutoregressiveIndependent(InferenceStrategyBase):
         super().__init__(*args, **kwargs)
 
     def next_indices(self):
-        n_to_condition_on = self._max_T - self._step_size
+        n_to_condition_on = self._max_frames - self._step_size
         n_autoreg_frames = n_to_condition_on // 2
         frames_to_condition_on = set(sorted(self._done_frames)[-n_autoreg_frames:])
         reversed_obs_frames = sorted(self._obs_frames)[::-1]
