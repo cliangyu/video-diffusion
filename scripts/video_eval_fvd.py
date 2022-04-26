@@ -160,8 +160,7 @@ if __name__ == "__main__":
         T=args.T,
         num_samples=args.num_samples))
     # Save all metrics as a pickle file
-    for mode in args.modes:
-        metrics_pkl[mode] = new_metrics[mode]
+    metrics_pkl["fvd"] = new_metrics["fvd"]
 
     with test_util.Protect(pickle_path): # avoids race conditions
         pickle.dump(metrics_pkl, open(pickle_path, "wb"))
