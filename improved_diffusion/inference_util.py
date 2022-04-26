@@ -81,3 +81,30 @@ class ExpPast(InferenceStrategyBase):
             if cur_idx - i not in obs_frame_indices:
                 obs_frame_indices.append(cur_idx - i)
         return obs_frame_indices, latent_frame_indices
+
+
+class MixedAutoregressiveIndependent(InferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def next_indices(self):
+        n_to_condition_on = self._max_T - self._step_size
+        n_autoreg_frames = n_to_condition_on // 2
+        frames_to_condition_on = set(sorted(self._done_frames)[-n_autoreg_frames:])
+        reversed_obs_frames = sorted(self._obs_frames)[::-1]
+        for i in reversed_obs_frames:
+            frames_to_condition_on.add(i)
+            if len(frames_to_condition_on) == n_to_condition_on:
+                break
+        obs_frame_indices = sorted(frames_to_condition_on)
+        first_idx = max(self._done_frames) + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
+        return obs_frame_indices, latent_frame_indices
+
+
+inference_strategies = {
+    'autoreg': Autoregressive,
+    'independent': Independent,
+    'exp-past': ExpPast,
+    'mixed-autoreg-independent': MixedAutoregressiveIndependent,
+}
