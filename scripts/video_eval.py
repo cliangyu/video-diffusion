@@ -13,10 +13,16 @@ from skimage.metrics import peak_signal_noise_ratio as psnr_metric
 from skimage.metrics import structural_similarity as ssim_metric
 import lpips as lpips_metric
 from collections import defaultdict
-import tensorflow as tf
+try:
+   import tensorflow as tf
+except ModuleNotFoundError:
+    print("WARNING: failed tensorflow import")
 
 from improved_diffusion.image_datasets import get_test_dataset
-import improved_diffusion.frechet_video_distance as fvd
+try:
+    import improved_diffusion.frechet_video_distance as fvd
+except ModuleNotFoundError:
+    print("WARNING: failed fvd import")
 
 
 def compute_FVD(vid1, vid2):
