@@ -108,13 +108,6 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
 
 def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
-    # Prepare the indices
-    if args.indices is None:
-        if "SLURM_ARRAY_TASK_ID" in os.environ:
-            task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
-            args.indices = list(range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
-        else:
-            args.indices = list(range(len(dataset)))
     # Create the output directory (if does not exist)
     model_step = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")["step"]
     if args.out_dir is None:
@@ -134,7 +127,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
             output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
-            todo = [not p.exists() and (cnt + i in args.indices) for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
+            todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
             else:
@@ -204,14 +197,21 @@ if __name__ == "__main__":
         )
     model = model.to(args.device)
     model.eval()
+    # Prepare the indices
+    if args.indices is None:
+        if "SLURM_ARRAY_TASK_ID" in os.environ:
+            task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
+            args.indices = list(range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
+        else:
+            args.indices = list(range(len(dataset)))
     # Load the test set
     dataset = get_test_dataset(dataset_name=model_args.dataset)
     if args.subset_size is not None:
+        raise Exception
         indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
         dataset = torch.utils.data.Subset(dataset, list(range(args.subset_size)))
         print(f"Randomly subsampled {args.subset_size} samples from the dataset.")
-    else:
-        indices = None
+    dataset = torch.utils.data.Subset(dataset, args.indices)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     print(f"Dataset size = {len(dataset)}")
     postfix = ""
@@ -219,4 +219,4 @@ if __name__ == "__main__":
         postfix += "_ddim"
     if args.timestep_respacing != "":
         postfix += "_" + f"respace{args.timestep_respacing}"
-    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=indices)
+    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=args.indices)
