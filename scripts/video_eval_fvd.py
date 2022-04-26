@@ -63,8 +63,7 @@ def compute_FVD(vid1_features, vid2_features):
 
 
 def compute_fvd_lazy(data_fetch, T, num_samples):
-    #num_videos = len(data_fetch)
-    num_videos = 25
+    num_videos = len(data_fetch)
     gt_features = np.zeros((num_samples, num_videos, 400))
     pred_features = np.zeros((num_samples, num_videos, 400))
     fvd = np.zeros((num_samples))
