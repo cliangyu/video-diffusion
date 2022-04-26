@@ -29,7 +29,9 @@ import six
 import tensorflow.compat.v1 as tf
 import tensorflow_gan as tfgan
 import tensorflow_hub as hub
+import os
 
+os.environ["TFHUB_CACHE_DIR"] = f"{os.environ['PWD']}/.tfhub_cache"
 
 def preprocess(videos, target_resolution):
   """Runs some preprocessing on the videos for I3D model.
@@ -119,7 +121,7 @@ def create_id3_embedding(videos):
   assert video_batch_size in [batch_size, -1, None], "Invalid batch size"
   tensor_name = module_scope + "RGB/inception_i3d/Mean:0"
   if not _is_in_graph(tensor_name):
-    i3d_model = hub.Module(module_spec, name=module_name)
+    i3d_model = hub.Module(hub.resolve(module_spec), name=module_name)
     i3d_model(videos)
 
   # gets the kinetics-i3d-400-logits layer
