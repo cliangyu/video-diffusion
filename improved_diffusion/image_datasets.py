@@ -21,28 +21,32 @@ try:
     tf.config.set_visible_devices([], 'GPU')
     visible_devices = tf.config.get_visible_devices()
     for device in visible_devices:
-        assert device.device_type != 'GPU'
+       assert device.device_type != 'GPU'
 except ModuleNotFoundError:
     print('WARNING: Failed tensorflow import.')
 
 
 video_data_paths_dict = {
-    "minerl":  "datasets/minerl_navigate",
-    "mazes":  "datasets/mazes-torch",
-    "bouncy_balls":  "datasets/bouncing_balls_100",
+    "minerl":       "datasets/minerl_navigate",
+    "mazes":        "datasets/mazes-torch",
+    "mazes_cwvae":  "datasets/gqn_mazes-torch",
+    "bouncy_balls": "datasets/bouncing_balls_100",
 }
 
 default_T_dict = {
-    "minerl": 500,
-    "mazes": 300,
+    "minerl":       500,
+    "mazes":        300,
+    "mazes_cwvae":  300,
     "bouncy_balls": 100,
 }
 
 default_image_size_dict = {
-    "minerl": 64,
-    "mazes": 64,
+    "minerl":       64,
+    "mazes":        64,
+    "mazes_cwvae":  64,
     "bouncy_balls": 32,
 }
+
 
 def load_data(
     *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
@@ -118,6 +122,10 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
         loader = get_loader(dataset)
+    elif dataset_name == "mazes_cwvae":
+        data_path = os.path.join(data_path, "train")
+        dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
+        loader = get_loader(dataset)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
@@ -148,6 +156,35 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "test")
+        dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
+    elif dataset_name == "mazes_cwvae":
+        data_path = os.path.join(data_path, "test")
+        dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
+    else:
+        raise Exception("no dataset", dataset_name)
+    return dataset
+
+
+def get_train_dataset(dataset_name, T=None, image_size=None):
+    data_path = video_data_paths_dict[dataset_name]
+    T = default_T_dict[dataset_name] if T is None else T
+    image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
+
+    if dataset_name == "minerl":
+        def _process_seq(seq):
+            seq = tf.expand_dims(seq, 0)
+            seq = tf.cast(seq, tf.float32) / 255.0
+            seq = seq * 2 - 1
+            seq = tf.transpose(seq, [0, 1, 4, 2, 3])
+            return seq
+        dataset = tfds.load('minerl_navigate', shuffle_files=False, data_dir=os.path.dirname(data_path))["train"]
+        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
+            lambda x: tf.data.Dataset.from_tensor_slices(_process_seq(x))
+        )
+        numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
+        dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+    elif dataset_name == "mazes":
+        data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
@@ -302,15 +339,49 @@ class MazesDataset:
         video = 2*video - 1
         return video, {}
 
+
+class GQNMazesDataset:
+    """ based on https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
+    """
+    def __init__(self, path, shard, num_shards, T):
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        self.path = Path(path)
+        self.T = T
+
+    def __len__(self):
+        path = _get_src_path(self.path)
+        return len(list(path.iterdir()))
+
+    def __getitem__(self, idx):
+        path = self.path / "{}.npy".format(idx)
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            src_path = _get_src_path(path)
+            shutil.copyfile(str(src_path), str(path))
+        try:
+            data = np.load(path)
+        except Exception as e:
+            print(f"Failed on loading {path}")
+            raise e
+        if self.T < len(data):
+            start_i = np.random.randint(len(data) - self.T + 1)
+            data = data[start_i:start_i+self.T]
+        byte_to_tensor = lambda x: ToTensor()(x)
+        video = torch.stack([byte_to_tensor(frame) for frame in data])
+        video = 2*video - 1
+        return video, {}
+
+
 def _get_src_path(path):
-        """ Returns the source path to a file. This function is mainly used to cope with my way of handling SLURM_TMPDIR on CC.
-            If DATA_ROOT is defined as an environment variable, the datasets should be copied under it. This function is called
-            when we need the source path from a given path under DATA_ROOT.
-        """
-        if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
-            # Verify that the path is under
-            data_root = Path(os.environ["DATA_ROOT"])
-            assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
-            src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
-            return src_path
-        return path
+    """ Returns the source path to a file. This function is mainly used to cope with my way of handling SLURM_TMPDIR on CC.
+        If DATA_ROOT is defined as an environment variable, the datasets should be copied under it. This function is called
+        when we need the source path from a given path under DATA_ROOT.
+    """
+    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+        # Verify that the path is under
+        data_root = Path(os.environ["DATA_ROOT"])
+        assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
+        src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
+        return src_path
+    return path

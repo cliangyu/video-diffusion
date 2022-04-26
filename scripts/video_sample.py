@@ -26,16 +26,6 @@ default_model_configs = {"enforce_position_invariance": False,
                          "cond_emb_type": "channel"}
 
 
-@torch.no_grad()
-def get_indices_exp_past(cur_idx, T, step_size=1):
-    if step_size != 1:
-        raise NotImplementedError("step_size != 1 not implemented")
-    distances_past = 2**torch.arange(int(np.log2(cur_idx))) # distances from the observed frames (all in the past)
-    obs_frame_indices = (cur_idx - distances_past)
-    latent_frame_indices = torch.tensor([cur_idx]).type(obs_frame_indices.type())
-    return obs_frame_indices, latent_frame_indices
-
-
 def get_masks(x0, num_obs):
     """ Generates observation, latent, and kinda-marginal masks.
     Assumes that the first num_obs frames are observed. and the rest are latent.
@@ -67,16 +57,7 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
-    if mode == "autoreg":
-        frame_indices_iterator = inference_util.Autoregressive(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
-    elif mode == "exp-past":
-        frame_indices_iterator = inference_util.ExpPast(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
-    elif mode == "multi-granuality":
-        raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
-    elif mode == "independent":
-        frame_indices_iterator = inference_util.Independent(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
-    else:
-        raise NotImplementedError(f"Inference mode {mode} is invalid.")
+    frame_indices_iterator = inference_util.inference_strategies[mode](video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
 
     for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
         print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
@@ -154,8 +135,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=6)
     parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--inference_mode", required=True,
-                        choices=["autoreg", "exp-past", "independent"])
+    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     # Inference arguments
     parser.add_argument("--max_T", type=int, default=10,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once.")

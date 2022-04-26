@@ -48,7 +48,7 @@ def main():
     if args.num_workers == -1:
         # Set the number of workers automatically.
         args.num_workers = max(num_available_cores() - 1, 1)
-        print(f"num_workers was not specified. It is automatically set to \"number of cores - 1\" = {args.num_workers}")
+        print(f"num_workers is not specified. It is automatically set to \"number of cores - 1\" = {args.num_workers}")
 
     video_length = default_T_dict[args.dataset]
     default_T = video_length
