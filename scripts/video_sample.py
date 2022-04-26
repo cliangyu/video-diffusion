@@ -17,24 +17,13 @@ from improved_diffusion.script_util import (
 from improved_diffusion import dist_util
 from improved_diffusion.image_datasets import get_test_dataset
 from improved_diffusion.script_util import str2bool
+from improved_diffusion import inference_util
 
 
 # A dictionary of default model configs for the parameters newly introduced.
 # It enables backward compatibility
 default_model_configs = {"enforce_position_invariance": False,
-                         "factorized_attention": False,
-                         "temporal_attention_type": "dpa"}
-
-
-@torch.no_grad()
-def get_indices_simple_autoreg(cur_idx, T, step_size=1):
-    """
-    step_size (int, optional): How many frames to generate. Defaults to 1.
-    """
-    distances_past = torch.arange(1, cur_idx+1)
-    obs_frame_indices = (cur_idx - distances_past)
-    latent_frame_indices = cur_idx + torch.arange(0, min(step_size, T - cur_idx))
-    return obs_frame_indices, latent_frame_indices
+                         "cond_emb_type": "channel"}
 
 
 @torch.no_grad()
@@ -44,12 +33,6 @@ def get_indices_exp_past(cur_idx, T, step_size=1):
     distances_past = 2**torch.arange(int(np.log2(cur_idx))) # distances from the observed frames (all in the past)
     obs_frame_indices = (cur_idx - distances_past)
     latent_frame_indices = torch.tensor([cur_idx]).type(obs_frame_indices.type())
-    return obs_frame_indices, latent_frame_indices
-
-@torch.no_grad()
-def get_indices_independent(cur_idx, T, obs_length, step_size=1):
-    obs_frame_indices = obs_length - torch.arange(1, obs_length+1)
-    latent_frame_indices = cur_idx + torch.arange(0, min(step_size, T - cur_idx))
     return obs_frame_indices, latent_frame_indices
 
 
@@ -74,7 +57,7 @@ def get_masks(x0, num_obs):
 
 @torch.no_grad()
 def infer_video(mode, model, diffusion, batch, max_T, obs_length,
-                step_size=1, assert_fits_gpu=True):
+                step_size=1):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -84,32 +67,22 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
-    if mode == "simple-autoreg":
-        get_indices = get_indices_simple_autoreg
-        get_indices_kwargs = {}
+    if mode == "autoreg":
+        frame_indices_iterator = inference_util.Autoregressive(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
     elif mode == "exp-past":
-        get_indices = get_indices_exp_past
-        get_indices_kwargs = {}
+        frame_indices_iterator = inference_util.ExpPast(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
     elif mode == "multi-granuality":
         raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
     elif mode == "independent":
-        get_indices = get_indices_independent
-        get_indices_kwargs = dict(obs_length=obs_length)
+        frame_indices_iterator = inference_util.Independent(video_length=T, num_obs=obs_length, max_T=max_T, step_size=step_size)
     else:
         raise NotImplementedError(f"Inference mode {mode} is invalid.")
 
-    for i in tqdm(range(obs_length, T, step_size)):
-        # Prepare frame indices
-        obs_frame_indices, latent_frame_indices = get_indices(i, T=T, step_size=step_size, **get_indices_kwargs)
-        if len(obs_frame_indices) + len(latent_frame_indices) > max_T:
-            print(f"**WARNING**: Dropping {len(obs_frame_indices) + len(latent_frame_indices) - max_T} of the observed frames because they don't fit in the GPU memory.")
-            obs_frame_indices = obs_frame_indices[:max_T-len(latent_frame_indices)] # drops the last frames, if not fitting in the GPU memory.
-            if assert_fits_gpu:
-                raise RuntimeError("The batch is too large to fit in the GPU memory.")
-        print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.\n")
+    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
+        print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
         # Prepare network's input
         x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
-        frame_indices = torch.cat([obs_frame_indices, latent_frame_indices], dim=0).repeat((B, 1))
+        frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
         # Prepare masks
         obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
         print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
@@ -131,77 +104,6 @@ def infer_video(mode, model, diffusion, batch, max_T, obs_length,
         # Fill in the generated frames
         samples[:, latent_frame_indices] = local_samples[:, -len(latent_frame_indices):].cpu()
     return samples.numpy()
-
-
-@torch.no_grad()
-def dryrun_gpu_memory(args, model, diffusion, dataloader):
-    import pynvml
-    pynvml.nvmlInit()
-    gpu_info_handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
-    batch = next(iter(dataloader))[0].to(args.device)
-    mode = args.inference_mode
-    max_T = args.max_T
-    assert_fits_gpu = args.assert_fits_gpu
-    B, T, C, H, W = batch.shape
-    samples_base = batch[:1].cpu().clone() # Start with a batch size of 1
-    if mode == "simple-autoreg":
-        get_indices = get_indices_simple_autoreg
-        get_indices_kwargs = {}
-    elif mode == "exp-past":
-        get_indices = get_indices_exp_past
-        get_indices_kwargs = {}
-    elif mode == "multi-granuality":
-        raise NotImplementedError(f"Inference mode {mode} is not implemented yet.")
-    elif mode == "independent":
-        get_indices = get_indices_independent
-        get_indices_kwargs = {}
-    else:
-        raise NotImplementedError(f"Inference mode {mode} is invalid.")
-
-    i = T - 1
-    # Prepare frame indices
-    obs_frame_indices, latent_frame_indices = get_indices(i, T=T, step_size=args.step_size, **get_indices_kwargs)
-    if len(obs_frame_indices) + len(latent_frame_indices) > max_T:
-            print(f"**WARNING**: Dropping {len(obs_frame_indices) + len(latent_frame_indices) - max_T} of the observed frames because they don't fit in the GPU memory.")
-            obs_frame_indices = obs_frame_indices[:max_T-len(latent_frame_indices)] # drops the last frames, if not fitting in the GPU memory.
-            if assert_fits_gpu:
-                raise RuntimeError("The batch is too large to fit in the GPU memory.")
-    print(f"Conditioning on {obs_frame_indices.numpy()} frames, predicting {latent_frame_indices.numpy()}.")
-    # Prepare network's input
-    x0_base = torch.cat([samples_base[:, obs_frame_indices], samples_base[:, latent_frame_indices]], dim=1)
-    frame_indices_base = torch.cat([obs_frame_indices, latent_frame_indices], dim=0).repeat((1, 1))
-    # Prepare masks
-    obs_mask_base, latent_mask_base, kinda_marg_mask_base = get_masks(x0_base, len(obs_frame_indices))
-    sm = 0
-    for B in range(1, 1000):
-        # Fix the shapes
-        x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices = [xyz.repeat_interleave(B, dim=0)
-            for xyz in [x0_base, obs_mask_base, latent_mask_base, kinda_marg_mask_base, frame_indices_base]]
-        # Move tensors to the correct device
-        [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device)
-            for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
-        x0 = torch.randn_like(x0)
-        # Run the network
-        print(f"Model input batch size (to double check): {len(x0)}")
-        t_0 = time.time()
-        local_samples, attention_map = diffusion.p_sample_loop(
-            model, x0.shape, clip_denoised=True,
-            model_kwargs=dict(frame_indices=frame_indices,
-                              x0=x0,
-                              obs_mask=obs_mask,
-                              latent_mask=latent_mask,
-                              kinda_marg_mask=kinda_marg_mask),
-            latent_mask=latent_mask,
-            return_attn_weights=False)
-        info = pynvml.nvmlDeviceGetMemoryInfo(gpu_info_handle)
-        gpu_mem_info = {k: getattr(info, k) for k in ["used", "free", "total"]}
-        gpu_mem_info = {k: v / 2**20 for k, v in gpu_mem_info.items()}
-        print("#" * 20)
-        print(f"Passed for a batch size of {B}.")
-        print(f"Took {time.time() - t_0:.2f}s.")
-        print(f"GPU usage: {gpu_mem_info['used']:,.2f} / {gpu_mem_info['total']:,.2f} = {gpu_mem_info['used'] / gpu_mem_info['total'] * 100:.2f}%")
-        print("#" * 20)
-        sm += local_samples.sum().item() # Don't know if Python might optimize the code at runtime and ignore local_samples. This bit avoid the potnetial optimization.
 
 
 def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
@@ -241,7 +143,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
                 batch = batch.to(args.device)
                 recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                     batch=batch, max_T=args.max_T, obs_length=args.obs_length,
-                                    assert_fits_gpu=args.assert_fits_gpu, step_size=args.step_size)
+                                    step_size=args.step_size)
                 recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
                 for i in range(batch_size):
@@ -260,21 +162,16 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--inference_mode", required=True,
-                        choices=["simple-autoreg", "exp-past", "multi-granuality", "independent"])
+                        choices=["autoreg", "exp-past", "independent"])
     # Inference arguments
     parser.add_argument("--max_T", type=int, default=10,
-                        help="Maximum length of the sequence that fits in the GPU memory.")
+                        help="Maximum number of video frames (observed or latent) allowed to pass to the model at once.")
     parser.add_argument("--obs_length", type=int, default=36,
                         help="Number of observed frames. It will observe this many frames from the beginning of the video and predict the rest.")
     parser.add_argument("--step_size", type=int, default=1,
-                        help="Number of frames to predict in each prediciton step. Ignored for multi-granuality inference mode. Defults to 1.")
+                        help="Number of frames to predict in each prediciton step. Defults to 1.")
     parser.add_argument("--indices", type=int, nargs="*", default=None,
                         help="If not None, only generate videos for the specified indices. Used for handling parallelization.")
-    parser.add_argument("--assert_fits_gpu", action="store_true",
-                        help="Assert that the batches fit in the GPU memory. If not, the program will exit."
-                             " If this argument is not specified, the program will drop observed enough frames to make sure it fits in the GPU memory.")
-    parser.add_argument("--dryrun_gpu_memory", action="store_true",
-                        help="Dry run the GPU memory. If this argument is specified, the program will run the GPU memory test to figure out the maximum batch size that fits in the GPU memory.")
     parser.add_argument("--use_ddim", type=str2bool, default=False)
     parser.add_argument("--timestep_respacing", type=str, default="")
     parser.add_argument("--T", type=int, default=None,
@@ -308,7 +205,7 @@ if __name__ == "__main__":
     model = model.to(args.device)
     model.eval()
     # Load the test set
-    dataset = get_test_dataset("minerl")#(dataset_name=model_args.dataset) # TODO: fix
+    dataset = get_test_dataset(dataset_name=model_args.dataset)
     if args.subset_size is not None:
         indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
         dataset = torch.utils.data.Subset(dataset, list(range(args.subset_size)))
@@ -317,12 +214,9 @@ if __name__ == "__main__":
         indices = None
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     print(f"Dataset size = {len(dataset)}")
-    if args.dryrun_gpu_memory:
-        dryrun_gpu_memory(args, model, diffusion, dataloader)
-    else:
-        postfix = ""
-        if args.use_ddim:
-            postfix += "_ddim"
-        if args.timestep_respacing != "":
-            postfix += "_" + f"respace{args.timestep_respacing}"
-        main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=indices)
+    postfix = ""
+    if args.use_ddim:
+        postfix += "_ddim"
+    if args.timestep_respacing != "":
+        postfix += "_" + f"respace{args.timestep_respacing}"
+    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=indices)
