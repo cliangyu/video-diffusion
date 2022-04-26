@@ -63,8 +63,7 @@ def compute_FVD(vid1_features, vid2_features):
 
 
 def compute_fvd_lazy(data_fetch, T, num_samples):
-    #num_videos = len(data_fetch)
-    num_videos = 25
+    num_videos = len(data_fetch)
     gt_features = np.zeros((num_samples, num_videos, 400))
     pred_features = np.zeros((num_samples, num_videos, 400))
     fvd = np.zeros((num_samples))
@@ -161,8 +160,7 @@ if __name__ == "__main__":
         T=args.T,
         num_samples=args.num_samples))
     # Save all metrics as a pickle file
-    for mode in args.modes:
-        metrics_pkl[mode] = new_metrics[mode]
+    metrics_pkl["fvd"] = new_metrics["fvd"]
 
     with test_util.Protect(pickle_path): # avoids race conditions
         pickle.dump(metrics_pkl, open(pickle_path, "wb"))
