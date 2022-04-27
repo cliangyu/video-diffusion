@@ -568,8 +568,8 @@ class TrainLoop:
         batch, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(batch, gather=False)
         vis = th.ones_like(batch)
         vis[obs_mask.expand_as(batch) == 1] = batch[obs_mask.expand_as(batch) == 1]
-        for quartile in [0, 1, 2, 3]:
-            t = th.tensor(self.diffusion.num_timesteps * ((1+quartile)/4) - 1).int()
+        for quartile in [0, 1, 2, 3, 3.99]:
+            t = th.tensor(self.diffusion.num_timesteps * (quartile/4)).int()
             xt = self.diffusion.q_sample(batch, t=t)
             vis[latent_mask.expand_as(batch) == 1] = xt[latent_mask.expand_as(batch) == 1]
             gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array',
