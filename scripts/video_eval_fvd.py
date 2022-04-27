@@ -134,7 +134,9 @@ if __name__ == "__main__":
     data_fetch = LazyDataFetch(dataset=args.dataset,
                                samples_dir=args.samples_dir,
                                obs_length=args.obs_length,
-                               dataset_drange=drange)
+                               dataset_drange=drange,
+                               num_samples=args.num_samples,
+                               drop_obs=False)
     if args.num_samples is None:
         args.num_samples = data_fetch.get_num_samples()
     if args.T is None:
