@@ -14,20 +14,9 @@ NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
     from mpi4py import MPI
 
-try:
-    import tensorflow as tf
-    import tensorflow_datasets as tfds
-    # Disable all GPUS (this avoids tensorflow allocating the whole GPU, causing problems for pytorch)
-    tf.config.set_visible_devices([], 'GPU')
-    visible_devices = tf.config.get_visible_devices()
-    for device in visible_devices:
-       assert device.device_type != 'GPU'
-except ModuleNotFoundError:
-    print('WARNING: Failed tensorflow import.')
-
 
 video_data_paths_dict = {
-    "minerl":       "datasets/minerl_navigate",
+    "minerl":       "datasets/minerl_navigate-torch",
     "mazes":        "datasets/mazes-torch",
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
@@ -111,27 +100,20 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
             dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True
         )
     if dataset_name == "minerl":
-        loader = MineRLDataLoader(
-            data_path, batch_size,
-            seq_len=T,
-            drop_last=True,
-            deterministic=deterministic,
-            shard=shard,
-            num_shards=num_shards,)
+        data_path = os.path.join(data_path, "train")
+        dataset = MineRLDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
-        loader = get_loader(dataset)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
-        loader = get_loader(dataset)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
-        loader = get_loader(dataset)
     else:
         raise Exception("no dataset", dataset_name)
+    loader = get_loader(dataset)
     while True:
         yield from loader
 
@@ -142,18 +124,8 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
 
     if dataset_name == "minerl":
-        def _process_seq(seq):
-            seq = tf.expand_dims(seq, 0)
-            seq = tf.cast(seq, tf.float32) / 255.0
-            seq = seq * 2 - 1
-            seq = tf.transpose(seq, [0, 1, 4, 2, 3])
-            return seq
-        dataset = tfds.load('minerl_navigate', shuffle_files=False, data_dir=os.path.dirname(data_path))["test"]
-        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
-            lambda x: tf.data.Dataset.from_tensor_slices(_process_seq(x))
-        )
-        numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
-        dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+        data_path = os.path.join(data_path, "test")
+        dataset = MineRLDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "test")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
@@ -171,18 +143,8 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
 
     if dataset_name == "minerl":
-        def _process_seq(seq):
-            seq = tf.expand_dims(seq, 0)
-            seq = tf.cast(seq, tf.float32) / 255.0
-            seq = seq * 2 - 1
-            seq = tf.transpose(seq, [0, 1, 4, 2, 3])
-            return seq
-        dataset = tfds.load('minerl_navigate', shuffle_files=False, data_dir=os.path.dirname(data_path))["train"]
-        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
-            lambda x: tf.data.Dataset.from_tensor_slices(_process_seq(x))
-        )
-        numpy_dataset = np.stack([x.numpy()[:T] for x in dataset])
-        dataset = TensorDataset(torch.as_tensor(numpy_dataset), torch.zeros(len(numpy_dataset)))
+        data_path = os.path.join(data_path, "train")
+        dataset = MineRLDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
@@ -266,122 +228,145 @@ class TensorVideoDataset(Dataset):
         return vid, {}
 
 
-class MineRLDataLoader:
-    def __init__(self, path, batch_size, seq_len,
-                 shard=0, num_shards=1, train=True,
-                 drop_last=True, deterministic=False):
+class BaseDataset(Dataset):
+    """ The base class for our video datasets. It is used for datasets where each video is stored under <dataset_root_path>/<split>
+        as a single file. This class provides the ability of caching the dataset items in a temporary directory (if
+        specified as an environment variable DATA_ROOT) as the items are read. In other words, every time an item is
+        retrieved from the dataset, it will try to load it from the temporary directory first. If it is not found, it
+        will be first copied from the original location.
 
-        assert seq_len is not None
-        self._seq_len = seq_len
-        self._data_seq_len = 500
+        This class provides a default implementation for __len__ as the number of file in the dataset's original directory.
+        It also provides the following two helper functions:
+        - cache_file: Given a path to a dataset file, makes sure the file is copied to the temporary directory.
+        - get_video_subsequence: Takes a video and a video length as input. If the video length is smaller than the
+          input video's length, it returns a random subsequence of the video. Otherwise, it returns the whole video.
+        A child class should implement the following methods:
+        - getitem_path: Given an index, returns the path to the video file.
+        - loaditem: Given a path to a video file, loads and returns the video.
+        - postprocess_video: Given a video, performs any postprocessing on the video.
 
-        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
-        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
-        
-        # Most of this initialization is taken from https://github.com/vaibhavsaxena11/cwvae/blob/master/data_loader.py
-        if train:
-            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["train"]
-        else:
-            dataset = tfds.load('minerl_navigate', shuffle_files=not deterministic, data_dir=os.path.dirname(path))["test"]
+    Args:
+        path (str): path to the dataset split
+    """
+    def __init__(self, path, T):
+        super().__init__()
+        self.T = T
+        self.path = Path(path)
 
-        dataset = dataset.map(lambda vid: vid["video"]).flat_map(
-            lambda x: tf.data.Dataset.from_tensor_slices(self._process_seq(x))
-        )
-        dataset = dataset.batch(batch_size, drop_remainder=drop_last,
-                                num_parallel_calls=tf.data.AUTOTUNE,
-                                deterministic=deterministic)
-        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
-        if train and not deterministic:
-            dataset = dataset.shuffle(10 * batch_size)
-        self.dataset = dataset
+    def __len__(self):
+        path = self.get_src_path(self.path)
+        return len(list(path.iterdir()))
 
-    def _process_seq(self, seq):
-        seq = tf.expand_dims(seq, 0)
-        seq = tf.cast(seq, tf.float32) / 255.0
-        seq = seq * 2 - 1
-        seq = tf.transpose(seq, [0, 1, 4, 2, 3])
-        return seq
+    def __getitem__(self, idx):
+        path = self.getitem_path(idx)
+        self.cache_file(path)
+        try:
+            video = self.loaditem(path)
+        except Exception as e:
+            print(f"Failed on loading {path}")
+            raise e
+        video = self.postprocess_video(video)
+        return self.get_video_subsequence(video, self.T), {}
 
-    def __iter__(self):
-        for batch in self.dataset:
-            batch = batch.numpy()
-            video_length = batch.shape[1]
-            start_idx = np.random.randint(low=0, high=video_length - self._seq_len + 1)
-            yield torch.as_tensor(batch[:, start_idx:start_idx+self._seq_len]), {}
+    def getitem_path(self, idx):
+        raise NotImplementedError
+
+    def loaditem(self, path):
+        raise NotImplementedError
+    
+    def postprocess_video(self, video):
+        raise NotImplementedError
+
+    def cache_file(self, path):
+        # Given a path to a dataset item, makes sure that the item is cached in the temporary directory.
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            src_path = self.get_src_path(path)
+            shutil.copyfile(str(src_path), str(path))
+
+    @staticmethod
+    def get_src_path(path):
+        """ Returns the source path to a file. This function is mainly used to cope with my way of handling SLURM_TMPDIR on CC.
+            If DATA_ROOT is defined as an environment variable, the datasets should be copied under it. This function is called
+            when we need the source path from a given path under DATA_ROOT.
+        """
+        if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
+            # Verify that the path is under
+            data_root = Path(os.environ["DATA_ROOT"])
+            assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
+            src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
+            return src_path
+        return path
+
+    @staticmethod
+    def get_video_subsequence(video, T):
+        if T is None:
+            return video
+        if T < len(video):
+            # Take a subsequence of the video.
+            start_i = np.random.randint(len(video) - T + 1)
+            video = video[start_i:start_i+T]
+        assert len(video) == T
+        return video
 
 
-class MazesDataset:
+class MazesDataset(BaseDataset):
     """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
     def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
-        self.path = Path(path)
-        self.T = T
+        super().__init__(path=path, T=T)
 
-    def __len__(self):
-        path = _get_src_path(self.path)
-        return len(list(path.iterdir()))
+    def getitem_path(self, idx):
+        return self.path / f"{idx}.pt"
 
-    def __getitem__(self, idx):
-        path = self.path / "{}.pt".format(idx)
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            src_path = _get_src_path(path)
-            shutil.copyfile(str(src_path), str(path))
-        data = torch.load(path)
-        if self.T < len(data):
-            start_i = np.random.randint(len(data) - self.T + 1)
-            data = data[start_i:start_i+self.T]
+    def loaditem(self, path):
+        return torch.load(path)
+    
+    def postprocess_video(self, video):
         # resizes from 84x84 to 64x64
         byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
-        video = torch.stack([byte_to_tensor(frame) for frame in data])
-        video = 2*video - 1
-        return video, {}
+        video = torch.stack([byte_to_tensor(frame) for frame in video])
+        video = 2 * video - 1
+        return video
+        
 
-
-class GQNMazesDataset:
+class GQNMazesDataset(BaseDataset):
     """ based on https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
     def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
-        self.path = Path(path)
-        self.T = T
+        super().__init__(path=path, T=T)
 
-    def __len__(self):
-        path = _get_src_path(self.path)
-        return len(list(path.iterdir()))
+    def getitem_path(self, idx):
+        return self.path / f"{idx}.npy"
 
-    def __getitem__(self, idx):
-        path = self.path / "{}.npy".format(idx)
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            src_path = _get_src_path(path)
-            shutil.copyfile(str(src_path), str(path))
-        try:
-            data = np.load(path)
-        except Exception as e:
-            print(f"Failed on loading {path}")
-            raise e
-        if self.T < len(data):
-            start_i = np.random.randint(len(data) - self.T + 1)
-            data = data[start_i:start_i+self.T]
+    def loaditem(self, path):
+        return np.load(path)
+    
+    def postprocess_video(self, video):
         byte_to_tensor = lambda x: ToTensor()(x)
-        video = torch.stack([byte_to_tensor(frame) for frame in data])
-        video = 2*video - 1
-        return video, {}
+        video = torch.stack([byte_to_tensor(frame) for frame in video])
+        video = 2 * video - 1
+        return video
+        
 
+class MineRLDataset(BaseDataset):
+    def __init__(self, path, shard, num_shards, T):
+        assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
+        assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
+        super().__init__(path=path, T=T)
 
-def _get_src_path(path):
-    """ Returns the source path to a file. This function is mainly used to cope with my way of handling SLURM_TMPDIR on CC.
-        If DATA_ROOT is defined as an environment variable, the datasets should be copied under it. This function is called
-        when we need the source path from a given path under DATA_ROOT.
-    """
-    if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
-        # Verify that the path is under
-        data_root = Path(os.environ["DATA_ROOT"])
-        assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
-        src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
-        return src_path
-    return path
+    def getitem_path(self, idx):
+        return self.path / f"{idx}.npy"
+
+    def loaditem(self, path):
+        return np.load(path)
+    
+    def postprocess_video(self, video):
+        byte_to_tensor = lambda x: ToTensor()(x)
+        video = torch.stack([byte_to_tensor(frame) for frame in video])
+        video = 2 * video - 1
+        return video
