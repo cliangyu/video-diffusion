@@ -568,13 +568,23 @@ class TrainLoop:
         batch, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(batch, gather=False)
         vis = th.ones_like(batch)
         vis[obs_mask.expand_as(batch) == 1] = batch[obs_mask.expand_as(batch) == 1]
-        for quartile in [0, 1, 2, 3]:
-            t = th.tensor(self.diffusion.num_timesteps * ((1+quartile)/4) - 1).int()
+        for quartile in [0, 1, 2, 3, 3.99]:
+            t = th.tensor(self.diffusion.num_timesteps * (quartile/4)).int()
             xt = self.diffusion.q_sample(batch, t=t)
             vis[latent_mask.expand_as(batch) == 1] = xt[latent_mask.expand_as(batch) == 1]
             gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array',
-                                  pad_dim=4, pad_val=0, pad_ends=True)
+                                  pad_dim_h=4, pad_dim_v=4, pad_val=0, pad_ends=True)
+        print(vis.shape, obs_mask.shape, batch.shape)
+        red = th.tensor([1., 0., 0.]).view(1, 1, 3, 1, 1)
+        blue = th.tensor([0., 1., 0.]).view(1, 1, 3, 1, 1)
+        vis = th.ones_like(vis)
+        vis_red = vis*red
+        vis_blue = vis*blue
+        vis[obs_mask.expand_as(batch) == 1] = vis_red[obs_mask.expand_as(batch) == 1]
+        vis[latent_mask.expand_as(batch) == 1] = vis_blue[latent_mask.expand_as(batch) == 1]
+        gather_and_log_videos('visualise/mask', vis, log_as='array', pad_dim_h=4, pad_dim_v=12, pad_val=0, pad_ends=True)
         logger.dumpkvs()
+
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
     for i, c in enumerate(color):
@@ -601,7 +611,7 @@ def concat_images_with_padding(images, horizontal=True,
     return th.cat(images_with_padding, dim=2 if horizontal else 1)
 
 
-def gather_and_log_videos(name, array, log_as='both', pad_dim=1, pad_val=255, pad_ends=False):
+def gather_and_log_videos(name, array, log_as='both', pad_dim_h=1, pad_dim_v=1, pad_val=255, pad_ends=False):
     """
     Unnormalises and logs videos given as B x T x C x H x W tensors.
         :`as` can be 'array', 'video', or 'both'
@@ -617,8 +627,8 @@ def gather_and_log_videos(name, array, log_as='both', pad_dim=1, pad_val=255, pa
     if log_as in ['array', 'both']:
         # log all videos/frames as one single image array
         img = concat_images_with_padding(
-            [concat_images_with_padding(vid, horizontal=True, pad_dim=pad_dim, pad_val=pad_val, pad_ends=pad_ends) for vid in videos],
-            horizontal=False, pad_dim=pad_dim, pad_val=pad_val, pad_ends=pad_ends,
+            [concat_images_with_padding(vid, horizontal=True, pad_dim=pad_dim_h, pad_val=pad_val, pad_ends=pad_ends) for vid in videos],
+            horizontal=False, pad_dim=pad_dim_v, pad_val=pad_val, pad_ends=pad_ends,
         )
         img = img.permute(1, 2, 0).numpy()
         logger.logkv(name+'array', wandb.Image(img))

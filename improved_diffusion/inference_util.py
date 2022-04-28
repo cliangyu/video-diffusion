@@ -58,11 +58,22 @@ class Autoregressive(InferenceStrategyBase):
 class Independent(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def next_indices(self):
         obs_frame_indices = sorted(self._obs_frames)[-(self._max_frames - self._step_size):]
         first_idx = max(self._done_frames) + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
+        return obs_frame_indices, latent_frame_indices
+
+
+class ReallyIndependent(InferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+    def next_indices(self):
+        obs_frame_indices = []
+        first_idx = max(self._done_frames) + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._max_frames, self._video_length)))
         return obs_frame_indices, latent_frame_indices
 
 
@@ -85,9 +96,6 @@ class ExpPast(InferenceStrategyBase):
 
 
 class MixedAutoregressiveIndependent(InferenceStrategyBase):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     def next_indices(self):
         n_to_condition_on = self._max_frames - self._step_size
         n_autoreg_frames = n_to_condition_on // 2
@@ -103,9 +111,46 @@ class MixedAutoregressiveIndependent(InferenceStrategyBase):
         return obs_frame_indices, latent_frame_indices
 
 
+class Hierarchy2Level(InferenceStrategyBase):
+    def next_indices(self):
+        n_to_condition_on = self._max_frames - self._step_size
+        n_to_sample = self._step_size
+        if len(self._done_frames) == len(self._obs_frames):
+            obs_frame_indices = [int(i) for i in np.linspace(min(self._obs_frames), max(self._obs_frames), n_to_condition_on)]
+            latent_frame_indices = [int(i) for i in np.linspace(max(self._obs_frames)+1, self._video_length-1, n_to_sample)]
+        else:
+            latent_frame_indices = []
+            idx = max(self._obs_frames)
+            while True:
+                idx += 1
+                if idx >= self._video_length or len(latent_frame_indices) == n_to_sample:
+                    break
+                elif idx not in self._done_frames:
+                    latent_frame_indices.append(idx)
+            obs_frame_indices = []
+            for idx in range(min(latent_frame_indices)+1, max(latent_frame_indices)):
+                # observe indices in the middle of the latents
+                if idx not in latent_frame_indices:
+                    obs_frame_indices.append(idx)
+            remaining_to_condition_on = n_to_condition_on - len(obs_frame_indices)
+            n_cond_after = remaining_to_condition_on // 2
+            n_cond_before = remaining_to_condition_on - n_cond_after
+            obs_frame_indices.extend(range(min(latent_frame_indices)-n_cond_before, min(latent_frame_indices)))
+            idx_after = max(latent_frame_indices)
+            while len(obs_frame_indices) < n_to_condition_on:
+                idx_after += 1
+                if idx_after >= self._video_length:
+                    break
+                elif idx_after in self._done_frames:
+                    obs_frame_indices.append(idx_after)
+        return obs_frame_indices, latent_frame_indices
+
+
 inference_strategies = {
     'autoreg': Autoregressive,
     'independent': Independent,
+    'really-independent': ReallyIndependent,
     'exp-past': ExpPast,
     'mixed-autoreg-independent': MixedAutoregressiveIndependent,
+    'hierarchy-2': Hierarchy2Level,
 }

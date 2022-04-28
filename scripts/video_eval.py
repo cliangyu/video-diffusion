@@ -13,23 +13,33 @@ from collections import defaultdict
 from skimage.metrics import peak_signal_noise_ratio as psnr_metric
 from skimage.metrics import structural_similarity as ssim_metric
 import lpips as lpips_metric
-
 from improved_diffusion.image_datasets import get_test_dataset
 from improved_diffusion import test_util
 
 
 class LazyDataFetch:
-    def __init__(self, dataset, samples_dir, obs_length, dataset_drange):
+    def __init__(self, dataset, samples_dir, obs_length, dataset_drange, drop_obs=True, num_samples=None):
+        """ A class to handle loading sampled videos and their corresponding gt videos from the dataset.
+
+        Arguments:
+            drop_obs: if True, drops the observed part of the videos from the output pairs of videos.
+            num_samples: if not None, asserts that all the videos have at least num_samples generated samples.
+        """
         self.obs_length = obs_length
+        self.drop_obs = drop_obs
         samples_dir = Path(samples_dir)
         assert samples_dir.exists()
         filenames = [(x, [int(num) for num in x.stem.split("_")[-1].split("-")]) for x in samples_dir.glob("sample_*.npy")]
         # filenames has the following structure: [(filename, (video_idx, sample_idx))]
         filenames.sort(key=lambda x: x[1][0])
+        # Arrange all the filenames in a dictionary from the test set index to a list of filenames (one filename for each generated sample).
         self.filenames_dict = defaultdict(list)
         for item in filenames:
             filename, (video_idx, sample_idx) = item
             self.filenames_dict[video_idx].append(filename)
+        if num_samples is not None:
+            for idx, filenames in self.filenames_dict.items():
+                assert len(filenames) >= num_samples, f"Expected at least {num_samples} samples for each video, but found {len(filenames)} for video #{idx}"
         self.keys = list(self.filenames_dict.keys())
         self.dataset = get_test_dataset(dataset)
         self.dataset_drange = dataset_drange
@@ -44,8 +54,11 @@ class LazyDataFetch:
         gt = self.dataset[video_idx][0].numpy()
         gt = (gt - self.dataset_drange[0]) / (self.dataset_drange[1] - self.dataset_drange[0]) # gt with pixel values in [0, 1]
         gt = gt.astype(np.float32)
-        return {"gt":gt[self.obs_length:],
-                "preds": [x[self.obs_length:] for x in preds]}
+        if self.drop_obs:
+            gt = gt[self.obs_length:]
+            preds = [x[self.obs_length:] for x in preds]
+        return {"gt":gt,
+                "preds": preds}
 
     def __len__(self):
         return len(self.keys)
@@ -128,7 +141,8 @@ if __name__ == "__main__":
     data_fetch = LazyDataFetch(dataset=args.dataset,
                                samples_dir=args.samples_dir,
                                obs_length=args.obs_length,
-                               dataset_drange=drange)
+                               dataset_drange=drange,
+                               num_samples=args.num_samples)
     if args.num_samples is None:
         args.num_samples = data_fetch.get_num_samples()
     if args.T is None:

@@ -134,7 +134,9 @@ if __name__ == "__main__":
     data_fetch = LazyDataFetch(dataset=args.dataset,
                                samples_dir=args.samples_dir,
                                obs_length=args.obs_length,
-                               dataset_drange=drange)
+                               dataset_drange=drange,
+                               num_samples=args.num_samples,
+                               drop_obs=False)
     if args.num_samples is None:
         args.num_samples = data_fetch.get_num_samples()
     if args.T is None:
@@ -160,8 +162,7 @@ if __name__ == "__main__":
         T=args.T,
         num_samples=args.num_samples))
     # Save all metrics as a pickle file
-    for mode in args.modes:
-        metrics_pkl[mode] = new_metrics[mode]
+    metrics_pkl["fvd"] = new_metrics["fvd"]
 
     with test_util.Protect(pickle_path): # avoids race conditions
         pickle.dump(metrics_pkl, open(pickle_path, "wb"))
