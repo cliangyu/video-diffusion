@@ -132,12 +132,11 @@ class HierarchyNLevel(InferenceStrategyBase):
 
         # select the grid of latent_frame_indices (shifting by 1 to avoid already-existing frames)
         latent_frame_indices = []
-        idx = self.last_sampled_idx - 1 + self.sample_every
-        print('index:', idx, '\n')
+        idx = self.last_sampled_idx + self.sample_every
         if idx >= self._video_length:
             self.current_level += 1
+            self.last_sampled_idx = 0
             idx = min(i for i in range(self._video_length) if i not in self._done_frames) - 1 + self.sample_every
-            print('index:', idx, '\n')
 
         while len(latent_frame_indices) < n_to_sample and idx < self._video_length:
             if idx not in self._done_frames:
@@ -151,7 +150,11 @@ class HierarchyNLevel(InferenceStrategyBase):
         obs_before_and_after = n_to_condition_on - len(obs_frame_indices)
 
         if obs_before_and_after < 2: # reduce step_size if necessary to ensure conditioning before + after latents
+            if self._step_size == 1:
+                raise Exception('Cannot condition before and after even with step size of 1')
+            sample_every = self.sample_every
             self._step_size -= 1
+            print('could not condition before and after with previous step size, recursing with step size', self._step_size)
             result = self.next_indices()
             self._step_size += 1
             return result
