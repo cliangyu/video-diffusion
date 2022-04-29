@@ -133,7 +133,8 @@ class HierarchyNLevel(InferenceStrategyBase):
         # select the grid of latent_frame_indices (shifting by 1 to avoid already-existing frames)
         latent_frame_indices = []
         idx = self.last_sampled_idx + self.sample_every
-        if idx >= self._video_length:
+        if len([i for i in range(idx, self._video_length) if i not in self._done_frames]) == 0:
+            # reset if there are no frames left to sample after idx
             self.current_level += 1
             self.last_sampled_idx = 0
             idx = min(i for i in range(self._video_length) if i not in self._done_frames) - 1 + self.sample_every
@@ -220,8 +221,9 @@ inference_strategies = {
     'really-independent': ReallyIndependent,
     'exp-past': ExpPast,
     'mixed-autoreg-independent': MixedAutoregressiveIndependent,
-    'hierarchy-2': Hierarchy2Level,
-    'hierarchy-2-new': get_hierarchy_n_level(2),
+#    'hierarchy-2': Hierarchy2Level,
+    'hierarchy-2': get_hierarchy_n_level(2),
     'hierarchy-3': get_hierarchy_n_level(3),
     'hierarchy-4': get_hierarchy_n_level(4),
+    'hierarchy-5': get_hierarchy_n_level(5),
 }
