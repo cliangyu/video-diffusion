@@ -19,70 +19,19 @@ from improved_diffusion import test_util
 sys.path.insert(1, str(Path(__file__).parent.resolve()))
 from video_eval import LazyDataFetch
 
-
-def compute_FVD_features(vid1, vid2):
-    # batch has to be == 16 in fvd.create_id3_embedding
-    assert vid2.shape[0] == vid1.shape[0]
-    batch_size = vid1.shape[0]
-
-    # assert channel is last dimension
-    # and trust that shape is B, T, H, W, C
-    assert vid1.shape[4] == 3
-    assert vid2.shape[4] == 3
-
-    # assert pixel values are bytes
-    assert vid1.dtype == np.uint8
-    assert vid2.dtype == np.uint8
-
-    with tf.Graph().as_default():
-        vid1 = tf.convert_to_tensor(vid1, np.uint8)
-        vid2 = tf.convert_to_tensor(vid2, np.uint8)
-
-        vid1_feature_vec = fvd.create_id3_embedding(fvd.preprocess(vid1,(224, 224)), batch_size=batch_size)
-        vid2_feature_vec = fvd.create_id3_embedding(fvd.preprocess(vid2,(224, 224)), batch_size=batch_size)
-
-        with tf.Session() as sess:
-            sess.run(tf.global_variables_initializer())
-            sess.run(tf.tables_initializer())
-            return sess.run(vid1_feature_vec), sess.run(vid2_feature_vec)
+tf.disable_eager_execution() # Required for our FVD computation code
 
 
-def compute_FVD(vid1_features, vid2_features):
-    # no batch limitations here, can pass in entire dataset
-    return fvd.fid_features_to_metric(vid1_features, vid2_features)
+class FVD:
+    def __init__(self, batch_size, T, frame_shape):
+        self.batch_size = batch_size
+        self.vid = tf.placeholder("uint8", [self.batch_size, T, *frame_shape])
+        self.vid_feature_vec = fvd.create_id3_embedding(fvd.preprocess(self.vid, (224, 224)), batch_size=self.batch_size)
+        self.sess = tf.Session()
+        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.tables_initializer())
 
-
-def compute_KVD(vid1_features, vid2_features):
-    # no batch limitations here, can pass in entire dataset
-    print("WARNING: KID's subset size must be chosen more carefully. Currently using the number of all samples.")
-    return fvd.kid_features_to_metric(vid1_features, vid2_features, kid_subset_size=len(vid1_features))
-
-
-
-def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
-    num_videos = len(data_fetch)
-    gt_features = np.zeros((num_samples, num_videos, 400))
-    pred_features = np.zeros((num_samples, num_videos, 400))
-    fvd = np.zeros((num_samples))
-    for i in tqdm(range(0, num_videos, batch_size)):
-        data_idx_min = i
-        data_idx_max = min(i + batch_size, num_videos)
-        data = [data_fetch[j] for j in range(data_idx_min, data_idx_max)]
-        gt_batch = [item["gt"] for item in data]
-        preds = [item["preds"] for item in data] # A list of size B. Each item is a dictionary from sample filenames to numpy arrays.
-        preds = map(lambda x: list(zip(*x.items())), preds) # A list of size B. Each item is a tuple of (list of filenames, list of numpy arrays)
-        preds_batch_names, preds_batch = list(zip(*list(preds)))
-        gt_batch = np.stack(gt_batch)[:, :T] # BxTxCxHxW
-        preds_batch = np.stack(preds_batch)[:, :, :T] # BxNxTxCxHxW
-        # Cache filename: dir/.preds_batch_names-T.fvd_features.npz
-        assert preds_batch.shape[1] == num_samples, f"Expected at least {num_samples} video prediction samples."
-        # Convert image pixels to bytes
-        gt_batch = (gt_batch * 255).astype("uint8")
-        preds_batch = (preds_batch * 255).astype("uint8")
-
-        gt_batch = np.moveaxis(gt_batch, 2, 4) # B, T, H, W, C
-        preds_batch = np.moveaxis(preds_batch, 3, 5) # B, T, H, W, C
-        # Pad arrays, if required
+    def extract_features(self, vid):
         def pad_along_axis(array: np.ndarray, target_length: int, axis: int = 0) -> np.ndarray:
             # From here: https://stackoverflow.com/questions/19349410/how-to-pad-with-zeros-a-tensor-along-some-axis-python
             pad_size = target_length - array.shape[axis]
@@ -90,23 +39,69 @@ def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
                 return array
             npad = [(0, 0)] * array.ndim
             npad[axis] = (0, pad_size)
-
             return np.pad(array, pad_width=npad, mode='constant', constant_values=0)
-        gt_batch = pad_along_axis(gt_batch, target_length=batch_size, axis=0)
-        preds_batch = pad_along_axis(preds_batch, target_length=batch_size, axis=0)
-        # Compute features to be used in FVD computation
+
+        # vid is expected to have a shape of BxTxCxHxW
+        B = vid.shape[0]
+        vid = np.moveaxis(vid, 2, 4) # B, T, H, W, C # TODO: should be a transpose
+        # Pad array, if required
+        vid = pad_along_axis(vid, target_length=self.batch_size, axis=0)
+        # Run the videos through the feature extractor and get the features.
+        features = self.sess.run(self.vid_feature_vec, feed_dict={self.vid: vid})
+        # Drop the paddings, if any
+        features = features[:B]
+        return features
+
+    @staticmethod
+    def compute_fvd(vid1_features, vid2_features):
+        return fvd.fid_features_to_metric(vid1_features, vid2_features)
+
+    @staticmethod
+    def compute_kvd(vid1_features, vid2_features):
+        # no batch limitations here, can pass in entire dataset
+        print("WARNING: KID's subset size must be chosen more carefully. Currently using the number of all samples.")
+        return fvd.kid_features_to_metric(vid1_features, vid2_features, kid_subset_size=len(vid1_features))
+
+    # Pad arrays, if required
+
+
+def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
+    C, H, W = data_fetch[0]["gt"][0].shape
+    fvd_handler = FVD(batch_size=batch_size, T=T, frame_shape=[H, W, C])
+    with tf.Graph().as_default():
+        num_videos = len(data_fetch)
+        gt_features = np.zeros((num_videos, 400))
+        pred_features = np.zeros((num_samples, num_videos, 400))
+        fvd = np.zeros((num_samples))
+        for i in tqdm(range(0, num_videos, batch_size)):
+            data_idx_min = i
+            data_idx_max = min(i + batch_size, num_videos)
+            data = [data_fetch[j] for j in range(data_idx_min, data_idx_max)]
+            gt_batch = [item["gt"] for item in data]
+            preds = [item["preds"] for item in data] # A list of size B. Each item is a dictionary from sample filenames to numpy arrays.
+            preds = map(lambda x: list(zip(*x.items())), preds) # A list of size B. Each item is a tuple of (list of filenames, list of numpy arrays)
+            preds_batch_names, preds_batch = list(zip(*list(preds)))
+            gt_batch = np.stack(gt_batch)[:, :T] # BxTxCxHxW
+            preds_batch = np.stack(preds_batch)[:, :, :T] # BxNxTxCxHxW
+            # Cache filename: dir/.preds_batch_names-T.fvd_features.npz
+            assert preds_batch.shape[1] == num_samples, f"Expected at least {num_samples} video prediction samples."
+            # Convert image pixels to bytes
+            gt_batch = (gt_batch * 255).astype("uint8")
+            preds_batch = (preds_batch * 255).astype("uint8")
+
+            # Compute features to be used in FVD computation
+            if i == 0: print(gt_batch.shape)
+            gt_f = fvd_handler.extract_features(gt_batch)
+            gt_features[data_idx_min:data_idx_max] = gt_f
+            # Compute features of the sampled videos
+            for k in range(num_samples):
+                pred_batch = preds_batch[:, k]
+                if i == 0: print(pred_batch.shape)
+                pred_f = fvd_handler.extract_features(pred_batch)
+                # Update the overall features array
+                pred_features[k, data_idx_min:data_idx_max] = pred_f
         for k in range(num_samples):
-            pred_batch = preds_batch[:, k]
-            print(pred_batch.shape, gt_batch.shape)
-            pred_f, gt_f = compute_FVD_features(pred_batch, gt_batch)
-            # Drop the paddings, if any
-            pred_f = pred_f[:data_idx_max - data_idx_min]
-            gt_f = gt_f[:data_idx_max - data_idx_min]
-            # Update the overall features array
-            pred_features[k, data_idx_min:data_idx_max] = pred_f
-            gt_features[k, data_idx_min:data_idx_max] = gt_f
-    for k in range(num_samples):
-        fvd[k] = compute_FVD(pred_features[k], gt_features[k])
+            fvd[k] = fvd_handler.compute_fvd(pred_features[k], gt_features)
     return {"fvd": fvd}
 
 
@@ -158,6 +153,10 @@ if __name__ == "__main__":
         args.modes = [mode for mode in args.modes if mode not in metrics_pkl]
     else:
         metrics_pkl = {}
+    print(f"Modes: {args.modes}")
+    if len(args.modes) == 0:
+        print("All requested metrics are already computed.")
+        quit(0)
 
     # Compute metrics
     new_metrics = {}
