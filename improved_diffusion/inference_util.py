@@ -111,6 +111,66 @@ class MixedAutoregressiveIndependent(InferenceStrategyBase):
         return obs_frame_indices, latent_frame_indices
 
 
+class HierarchyNLevel(InferenceStrategyBase):
+
+    @property
+    def N(self):
+        raise NotImplementedError
+
+    @property
+    def sample_every(self):
+        sample_every_on_level_1 = (self._video_length - len(self._obs_frames)) / self._step_size
+        return int(sample_every_on_level_1 ** ((self.N-self.current_level)/(self.N-1)))
+
+    def next_indices(self):
+        if len(self._done_frames) == len(self._obs_frames):
+            self.current_level = 1
+            self.last_sampled_idx = max(self._obs_frames)
+
+        n_to_condition_on = self._max_frames - self._step_size
+        n_to_sample = self._step_size
+
+        # select the grid of latent_frame_indices (shifting by 1 to avoid already-existing frames)
+        latent_frame_indices = []
+        idx = self.last_sampled_idx - 1 + self.sample_every
+        print('index:', idx, '\n')
+        if idx >= self._video_length:
+            self.current_level += 1
+            idx = min(i for i in range(self._video_length) if i not in self._done_frames) - 1 + self.sample_every
+            print('index:', idx, '\n')
+
+        while len(latent_frame_indices) < n_to_sample and idx < self._video_length:
+            if idx not in self._done_frames:
+                latent_frame_indices.append(idx)
+                idx +=  self.sample_every
+            elif idx in self._done_frames:
+                idx += 1
+
+        # observe any frames in between latent frames
+        obs_frame_indices = [i for i in range(min(latent_frame_indices), max(latent_frame_indices)) if i in self._done_frames]
+        obs_before_and_after = n_to_condition_on - len(obs_frame_indices)
+
+        if obs_before_and_after < 2: # reduce step_size if necessary to ensure conditioning before + after latents
+            self._step_size -= 1
+            result = self.next_indices()
+            self._step_size += 1
+            return result
+
+        max_n_after = obs_before_and_after // 2
+        # observe `n_after` frames afterwards
+        obs_frame_indices.extend([i for i in range(max(latent_frame_indices)+1, self._video_length) if i in self._done_frames][:max_n_after])
+        n_before = n_to_condition_on - len(obs_frame_indices)
+        # observe `n_before` frames before...
+        if self.current_level == 1:
+            obs_frame_indices.extend(list(range(max(self._obs_frames), -1, -int(max(self._obs_frames)/(n_before-1)))))
+        else:
+            obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
+
+        self.last_sampled_idx = max(latent_frame_indices)
+
+        return obs_frame_indices, latent_frame_indices
+
+
 class Hierarchy2Level(InferenceStrategyBase):
     def next_indices(self):
         n_to_condition_on = self._max_frames - self._step_size
@@ -146,6 +206,11 @@ class Hierarchy2Level(InferenceStrategyBase):
         return obs_frame_indices, latent_frame_indices
 
 
+def get_hierarchy_n_level(n):
+    class Hierarchy(HierarchyNLevel):
+        N = n
+    return Hierarchy
+
 inference_strategies = {
     'autoreg': Autoregressive,
     'independent': Independent,
@@ -153,4 +218,7 @@ inference_strategies = {
     'exp-past': ExpPast,
     'mixed-autoreg-independent': MixedAutoregressiveIndependent,
     'hierarchy-2': Hierarchy2Level,
+    'hierarchy-2-new': get_hierarchy_n_level(2),
+    'hierarchy-3': get_hierarchy_n_level(3),
+    'hierarchy-4': get_hierarchy_n_level(4),
 }
