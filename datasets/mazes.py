@@ -94,7 +94,7 @@ def _process_seq(seq):
     return seq
 
 if __name__ == "__main__":
-    data_dir = Path(".")
+    data_dir = Path(os.path.dirname(os.path.abspath(__file__)))
     orig_dataset = 'gqn_mazes'
     torch_dataset_path = data_dir / f'{orig_dataset}-torch'
     torch_dataset_path.mkdir(exist_ok=True)
