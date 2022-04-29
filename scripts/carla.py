@@ -18,16 +18,28 @@ parser.add_argument('--port', type=int, default=5555, help="5555 is the server w
 args = parser.parse_args()
 
 sensors_dict = {
-        'front-cam': {
-            'sensor_type': 'camera',
-            'camera_type': 'rgb-camera',
-            'bounding_box': False,
-            'show_bounding_boxes': False,
-            'world_sensor': False,
-            'resolution': def_res,
-            'location': SensorSettings.Location(x=0, z=2.8, y=0),
-            'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
-            },
+    'front-cam': {
+        'sensor_type': 'camera',
+        'camera_type': 'rgb-camera',
+        'bounding_box': False,
+        # 'track_actor_types': 'all', #Actors, # or 'all'
+        'track_actor_types': SensorSettings.Available_Tracked_Actors,
+        'show_bounding_boxes': False,
+        'world_sensor': False,
+        # 'resolution': Resolution(128, 128),
+        'resolution': Res.SD,
+        'location': SensorSettings.Location(x=2, z=3, y=0),
+        'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
+        'fov': 150.0,
+        # 'sensor_type': 'camera',
+        # 'camera_type': 'rgb-camera',
+        # 'bounding_box': False,
+        # 'show_bounding_boxes': False,
+        # 'world_sensor': False,
+        # 'resolution': def_res,
+        # 'location': SensorSettings.Location(x=0, z=2.8, y=0),
+        # 'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
+    },
 }
 
 fake_parser = argparse.ArgumentParser()
