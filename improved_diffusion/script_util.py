@@ -40,12 +40,12 @@ def video_model_and_diffusion_defaults():
     defaults = model_and_diffusion_defaults()
     defaults['T'] = -1
     defaults['use_spatial_encoding'] = True
-    defaults['use_frame_encoding'] = True
+    defaults['use_frame_encoding'] = False
     defaults['cross_frame_attention'] = True
     defaults['do_cond_marg'] = True
-    defaults['enforce_position_invariance'] = True
+    defaults['enforce_position_invariance'] = False
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
-    defaults['use_rpe_net'] = False
+    defaults['use_rpe_net'] = True
     defaults['cond_emb_type'] = 'channel'   # channel, channel-initzero, duplicate, duplicate-initzero, or t=0
     defaults['rp_alpha'] = None
     defaults['rp_beta'] = None

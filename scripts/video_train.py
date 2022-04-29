@@ -132,7 +132,7 @@ def create_argparser():
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
         sample_interval=50000,
-        save_interval=10000,
+        save_interval=100000,
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
@@ -142,7 +142,7 @@ def create_argparser():
         valid_microbatch=-1,
         n_interesting_masks=3,
         max_frames=10,
-        save_latest_only=True,  # If False, keeps all the checkpoints saved during training.
+        save_latest_only=False,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
         mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}"
         just_visualise=False,
