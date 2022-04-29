@@ -7,6 +7,7 @@ import imageio_ffmpeg
 import imageio
 import matplotlib.pyplot as plt
 import argparse
+import torch
 IN_COLAB = False
 
 def_res = Resolution(128, 128)
@@ -27,7 +28,7 @@ sensors_dict = {
         'show_bounding_boxes': False,
         'world_sensor': False,
         # 'resolution': Resolution(128, 128),
-        'resolution': Res.SD,
+        'resolution': def_res,
         'location': SensorSettings.Location(x=2, z=3, y=0),
         'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
         'fov': 150.0,
@@ -61,23 +62,27 @@ action = [0.0, 0.0]
 obs, reward, done, info = env.step(action)
 
 def reset_frames():
-    return {'images':[], 'coords': []}
+    return {'images':[], 'coords': [], 'actions': []}
 frames = reset_frames()
 
-repeats = 2
+repeats = 2  # TODO increase repeats and T
 T = 10
 walltime = time.time()
 for i in range(0, T*repeats):
     action = info['expert_action']
     obs, reward, done, info = env.step(action)
     frames['images'].append(obs['sensor_data']['front-cam']['image'])
-    x, y, z = obs['compact_vector'][:3]
-    frames['coords'].append((x, y, z))
+    frames['coords'].append(obs['compact_vector'])
+    frames['actions'].append(action)
 
     if i % T == T-1:
-        imageio.mimwrite(f'datasets/carla/gen-videos/video_{i//T}.mp4', frames['images'], fps=10, quality=7)
+        video = torch.stack([torch.tensor(img) for img in frames['images']])
+        torch.save(video, f'datasets/carla/gen-videos/video_{i//T}.pt')
+        # imageio.mimwrite(, frames['images'], fps=10, quality=7)
         coords = np.array(frames['coords'])
         np.save(f'datasets/carla/gen-videos/coords_{i//T}.npy', coords)
+        actions = np.array(frames['actions'])
+        np.save(f'datasets/carla/gen-videos/actions_{i//T}.npy', coords)
         frames = reset_frames()
         print(f'generated {T} frames in {time.time()-walltime} seconds')
         walltime = time.time()
