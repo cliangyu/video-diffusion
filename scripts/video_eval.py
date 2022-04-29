@@ -50,13 +50,13 @@ class LazyDataFetch:
         # Each video has shape of TxCx3xHxW
         video_idx = self.keys[idx]
         filename_list = self.filenames_dict[video_idx]
-        preds = [(np.load(filename) / 255.0).astype(np.float32) for filename in filename_list] # pred with pixel values in [0, 1]
+        preds = {str(filename): (np.load(filename) / 255.0).astype(np.float32) for filename in filename_list} # pred with pixel values in [0, 1]
         gt = self.dataset[video_idx][0].numpy()
         gt = (gt - self.dataset_drange[0]) / (self.dataset_drange[1] - self.dataset_drange[0]) # gt with pixel values in [0, 1]
         gt = gt.astype(np.float32)
         if self.drop_obs:
             gt = gt[self.obs_length:]
-            preds = [x[self.obs_length:] for x in preds]
+            preds = {k: x[self.obs_length:] for k, x in preds.items()}
         return {"gt":gt,
                 "preds": preds}
 
@@ -67,15 +67,23 @@ class LazyDataFetch:
         # Returns the number of samples per test video in the database. Assumes all test videos have the same number of samples
         return len(self[0]["preds"])
 
+    @property
+    def T(self):
+        res = list(self[0]["preds"].values())[0].shape[0]
+        if self.drop_obs:
+            res += self.obs_length
+        return res
+
 
 def compute_metrics_lazy(data_fetch, T, num_samples, C=3):
+    T = T - data_fetch.obs_length
     num_videos = len(data_fetch)
     ssim = np.zeros((num_videos, num_samples, T))
     psnr = np.zeros((num_videos, num_samples, T))
     for i in tqdm(range(num_videos)):
         data = data_fetch[i]
         gt = data["gt"]
-        preds = data["preds"]
+        preds = list(data["preds"].values()) # Ignore the keys
         assert len(preds) >= num_samples, f"Expected at least {num_samples} video prediction samples. Found {len(preds)} for video #{i}"
         preds = preds[:num_samples]
         for k, pred in enumerate(preds):
@@ -91,13 +99,14 @@ def compute_metrics_lazy(data_fetch, T, num_samples, C=3):
 
 @torch.no_grad()
 def compute_lpips_lazy(data_fetch, T, num_samples, device="cuda"):
+    T = T - data_fetch.obs_length
     num_videos = len(data_fetch)
     lpips = np.zeros((num_videos, num_samples, T))
     loss_fn = lpips_metric.LPIPS(net='alex', spatial=False).to(device)
     for i in tqdm(range(num_videos)):
         data = data_fetch[i]
         gt = data["gt"]
-        preds = data["preds"]
+        preds = list(data["preds"].values()) # Ignore the keys
         assert len(preds) >= num_samples, f"Expected at least {num_samples} video prediction samples. Found {len(preds)} for video #{i}"
         preds = preds[:num_samples]
         gt = gt[:T]
@@ -146,9 +155,9 @@ if __name__ == "__main__":
     if args.num_samples is None:
         args.num_samples = data_fetch.get_num_samples()
     if args.T is None:
-        args.T = data_fetch[0]["preds"][0].shape[0]
+        args.T = data_fetch.T
     else:
-        assert args.T <= data_fetch[0]["preds"][0].shape[0]
+        assert args.T <= data_fetch.T
 
     # Check if metrics have already been computed
     name = f"new_metrics_{len(data_fetch)}-{args.num_samples}-{args.T}"
