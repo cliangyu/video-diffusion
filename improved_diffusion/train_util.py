@@ -203,7 +203,7 @@ class TrainLoop:
     def sample_some_indices(self, max_indices, T):
         s = th.randint(low=1, high=max_indices+1, size=())
         max_scale = T / (s-0.999)
-        if self.mask_distribution == "differently-spaced-groups":
+        if self.mask_distribution in ["differently-spaced-groups", "differently-spaced-groups-no-marg"]:
             scale = np.exp(np.random.rand() * np.log(max_scale))
         elif self.mask_distribution == "consecutive-groups":
             scale = 1
