@@ -119,7 +119,7 @@ class HierarchyNLevel(InferenceStrategyBase):
 
     @property
     def sample_every(self):
-        sample_every_on_level_1 = (self._video_length - len(self._obs_frames)) / self._step_size
+        sample_every_on_level_1 = (self._video_length - len(self._obs_frames)) / (self._step_size-1)
         return int(sample_every_on_level_1 ** ((self.N-self.current_level)/(self.N-1)))
 
     def next_indices(self):
