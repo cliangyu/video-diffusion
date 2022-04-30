@@ -43,7 +43,7 @@ class FVD:
 
         # vid is expected to have a shape of BxTxCxHxW
         B = vid.shape[0]
-        vid = np.moveaxis(vid, 2, 4) # B, T, H, W, C # TODO: should be a transpose
+        vid = np.moveaxis(vid, 2, 4) # B, T, H, W, C
         # Pad array, if required
         vid = pad_along_axis(vid, target_length=self.batch_size, axis=0)
         # Run the videos through the feature extractor and get the features.
