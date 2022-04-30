@@ -248,6 +248,9 @@ class TrainLoop:
                 set_values = set_masks[k]
                 n_set = min(len(set_values), len(masks[k]))
                 masks[k][:n_set] = set_values[:n_set]
+        if self.mask_distribution == 'differently-spaced-groups-no-marg':
+            masks['latent'] = 1-mask['obs']   # do no marginalisation
+            assert self.max_frames == T
         represented_mask = (masks['obs'] + masks['latent'] + masks['kinda_marg']).clip(max=1)
         if not gather:
             return batch1, masks['obs'], masks['latent'], masks['kinda_marg']
