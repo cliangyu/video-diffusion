@@ -166,7 +166,7 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_before = n_to_condition_on - len(obs_frame_indices)
         # observe `n_before` frames before...
         if self.current_level == 1:
-            obs_frame_indices.extend(list(range(max(self._obs_frames), -1, -int(max(self._obs_frames)/(n_before-1)))))
+            obs_frame_indices.extend(list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
         else:
             obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
 
