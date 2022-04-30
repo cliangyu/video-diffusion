@@ -230,6 +230,12 @@ class TrainLoop:
                 start_i = th.randint(low=0, high=T-self.max_frames+1, size=())
                 obs_row[start_i:start_i+n_obs] = 1.
                 latent_row[start_i+n_obs:start_i+n_obs+n_latent] = 1.
+            elif self.mask_distribution == "differently-spaced-groups-no-marg":
+                assert self.max_frames == T
+                while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
+                    indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=T))
+                    obs_row[indices] = 1.
+                latent_row += 1 - obs_row
             elif 'groups' in self.mask_distribution:
                 latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
                 while True:
@@ -248,9 +254,6 @@ class TrainLoop:
                 set_values = set_masks[k]
                 n_set = min(len(set_values), len(masks[k]))
                 masks[k][:n_set] = set_values[:n_set]
-        if self.mask_distribution == 'differently-spaced-groups-no-marg':
-            masks['latent'] = 1-mask['obs']   # do no marginalisation
-            assert self.max_frames == T
         represented_mask = (masks['obs'] + masks['latent'] + masks['kinda_marg']).clip(max=1)
         if not gather:
             return batch1, masks['obs'], masks['latent'], masks['kinda_marg']

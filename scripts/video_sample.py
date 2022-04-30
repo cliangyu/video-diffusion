@@ -117,6 +117,29 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
         cnt += batch_size
 
 
+def visualise(args):
+    vis = []
+    frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
+        video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size
+    )
+    exist_indices = list(range(args.obs_length))
+    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
+        print(obs_frame_indices, latent_frame_indices)
+        exist_indices.extend(latent_frame_indices)
+        new_layer = torch.zeros((args.T, 3)).int()
+        new_layer[exist_indices, 0] = 50
+        new_layer[obs_frame_indices, 0] = 255
+        new_layer[latent_frame_indices, 2] = 255
+        vis.append(new_layer)
+        vis.append(new_layer*0)
+    from improved_diffusion.train_util import concat_images_with_padding
+    from PIL import Image
+    vis = torch.stack(vis)
+    path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}.png"
+    Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
+    print(f"Saved to {path}")
+
+
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
@@ -141,7 +164,12 @@ if __name__ == "__main__":
                         help="If not None, only use a subset of the dataset. Defaults to the whole dataset.")
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
+    parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
     args = parser.parse_args()
+
+    if args.just_visualise:
+        visualise(args)
+        exit()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
 
