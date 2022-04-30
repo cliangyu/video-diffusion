@@ -536,7 +536,8 @@ class TrainLoop:
         rmse = ((error**2).mean()/latent_mask.mean()).sqrt()
         gather_and_log_videos('sample/', vis_all, log_as='array')
         n_samples_with_preset_masks = len(set_masks['obs']) * self.n_valid_repeats
-        gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
+        if n_samples_with_preset_masks > 0:
+            gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
         gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
         logger.logkv('timing/sampling_time', time()-sample_start)
