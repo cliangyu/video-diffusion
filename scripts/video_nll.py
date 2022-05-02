@@ -11,6 +11,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 import pickle
+import time
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
@@ -45,7 +46,11 @@ def get_eval_frame_indices(args, test_set_size):
         print('generated inference frame indices')
         if os.path.exists(args.indices_path):
             print(f'Checking match to indices at {args.indices_path}')
-            obs_to_check, lat_to_check = torch.load(args.indices_path)
+            try:
+                obs_to_check, lat_to_check = torch.load(args.indices_path)
+            except EOFError:  # possibly an issue with parallelism that we can solve by waiting for a while
+                time.sleep(5)
+                obs_to_check, lat_to_check = torch.load(args.indices_path)
             for i1, i2 in zip(obs_indices, obs_to_check):
                 assert i1 == i2
             for i1, i2 in zip(lat_indices, lat_to_check):
@@ -61,6 +66,11 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
+        fnames = [args.out_dir / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
+        if all([os.path.exists(f) for f in fnames]):
+            print('Already exist. Skipping', fnames)
+            cnt += len(batch)
+            continue
         batch_obs_indices = frame_indices[0][cnt:cnt+len(batch)]
         batch_lat_indices = frame_indices[1][cnt:cnt+len(batch)]
         x = batch_obs_indices
@@ -73,9 +83,8 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
                                               clip_denoised=args.clip_denoised,
                                               obs_indices=obs_indices, lat_indices=lat_indices))  # TODO normalise for just latent frames?
         returns = {k: np.stack([r[k] for r in returns], axis=1) for k in returns[0].keys()}
-        print({k: v.shape for k, v in returns.items()})
         for j in range(len(returns['total_bpd'])):
-            fname = args.out_dir / f"elbo_{cnt+j}{postfix}.pkl"
+            fname = fnames[j]
             pickle.dump({k: v[j] for k, v in returns.items()}, open(fname, 'wb'))
         cnt += len(batch)
 
@@ -87,15 +96,12 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     kinda_marg_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     frame_indices = torch.zeros_like(x0[:, :, 0, 0, 0]).int()
     for i, (obs_i, lat_i) in enumerate(zip(obs_indices, lat_indices)):
-        print(args.max_frames, len(obs_i), len(lat_i))
         x0[i, :len(obs_i)] = batch[i, obs_i]
         obs_mask[i, :len(obs_i)] = 1.
         frame_indices[i, :len(obs_i)] = torch.tensor(obs_i)
         x0[i, len(obs_i):len(obs_i)+len(lat_i)] = batch[i, lat_i]
         lat_mask[i, len(obs_i):len(obs_i)+len(lat_i)] = 1.
         frame_indices[i, len(obs_i):len(obs_i)+len(lat_i)] = torch.tensor(lat_i)
-    print(x0.shape, obs_mask.shape, lat_mask.shape, kinda_marg_mask.shape)
-    print(frame_indices)
     all_bpd = []
     all_metrics = {"vb": [], "mse": [], "xstart_mse": []}
     num_complete = 0
