@@ -1,6 +1,7 @@
 from invertedai_simulate.utils import Res, SensorSettings, Resolution, ClientSideBoundingBoxes
 from invertedai_simulate.interface import IAIEnv, ServerTimeoutError
 import numpy as np
+import os
 import time
 import cv2
 import imageio_ffmpeg
@@ -31,7 +32,7 @@ sensors_dict = {
         'resolution': def_res,
         'location': SensorSettings.Location(x=2, z=3, y=0),
         'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
-        'fov': 150.0,
+        'fov': 120.0,
         # 'sensor_type': 'camera',
         # 'camera_type': 'rgb-camera',
         # 'bounding_box': False,
@@ -65,8 +66,8 @@ def reset_frames():
     return {'images':[], 'coords': [], 'actions': []}
 frames = reset_frames()
 
-repeats = 2  # TODO increase repeats and T
-T = 10
+repeats = 500
+T = 1000
 walltime = time.time()
 for i in range(0, T*repeats):
     action = info['expert_action']
@@ -77,12 +78,12 @@ for i in range(0, T*repeats):
 
     if i % T == T-1:
         video = torch.stack([torch.tensor(img) for img in frames['images']])
-        torch.save(video, f'datasets/carla/gen-videos/video_{i//T}.pt')
-        # imageio.mimwrite(, frames['images'], fps=10, quality=7)
+        torch.save(video, os.path.join(args.save_dir, f'video_{i//T}.pt'))
+        imageio.mimwrite(os.path.join(args.save_dir, f'video_{i//T}.mp4'), frames['images'], fps=10, quality=7)
         coords = np.array(frames['coords'])
-        np.save(f'datasets/carla/gen-videos/coords_{i//T}.npy', coords)
+        np.save(os.path.join(args.save_dir, f'coords_{i//T}.npy'), coords)
         actions = np.array(frames['actions'])
-        np.save(f'datasets/carla/gen-videos/actions_{i//T}.npy', coords)
+        np.save(os.path.join(args.save_dir, f'actions_{i//T}.npy'), coords)
         frames = reset_frames()
         print(f'generated {T} frames in {time.time()-walltime} seconds')
         walltime = time.time()
