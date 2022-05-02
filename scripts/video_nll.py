@@ -102,9 +102,6 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
         x0[i, len(obs_i):len(obs_i)+len(lat_i)] = batch[i, lat_i]
         lat_mask[i, len(obs_i):len(obs_i)+len(lat_i)] = 1.
         frame_indices[i, len(obs_i):len(obs_i)+len(lat_i)] = torch.tensor(lat_i)
-    all_bpd = []
-    all_metrics = {"vb": [], "mse": [], "xstart_mse": []}
-    num_complete = 0
     model_kwargs = dict(frame_indices=frame_indices,
                         x0=x0,
                         obs_mask=obs_mask,
@@ -113,9 +110,11 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     metrics = diffusion.calc_bpd_loop(
         model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs
     )
-    # sum (rather than mean) over frame dimension by multiplying by number of frames
-    metrics = {k: v*n_latents.sum() for (k, v), n_latents in zip(metrics.items(), lat_mask.flatten(start_dim=1).sum(dim=1))}
+    n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
+
     metrics = {k: v.sum(dim=1) if v.ndim > 1 else v for k, v in metrics.items()}
+    # sum (rather than mean) over frame dimension by multiplying by number of frames
+    metrics = {k: v*n_latents_batch for (k, v) in metrics.items()}
     metrics = {k: v.detach().cpu().numpy() for k, v in metrics.items()}
     return metrics
 
