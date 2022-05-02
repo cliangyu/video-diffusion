@@ -119,7 +119,7 @@ class HierarchyNLevel(InferenceStrategyBase):
 
     @property
     def sample_every(self):
-        sample_every_on_level_1 = (self._video_length - len(self._obs_frames)) / self._step_size
+        sample_every_on_level_1 = (self._video_length - len(self._obs_frames)) / (self._step_size-1)
         return int(sample_every_on_level_1 ** ((self.N-self.current_level)/(self.N-1)))
 
     def next_indices(self):
@@ -155,7 +155,6 @@ class HierarchyNLevel(InferenceStrategyBase):
                 raise Exception('Cannot condition before and after even with step size of 1')
             sample_every = self.sample_every
             self._step_size -= 1
-            print('could not condition before and after with previous step size, recursing with step size', self._step_size)
             result = self.next_indices()
             self._step_size += 1
             return result
@@ -166,7 +165,7 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_before = n_to_condition_on - len(obs_frame_indices)
         # observe `n_before` frames before...
         if self.current_level == 1:
-            obs_frame_indices.extend(list(range(max(self._obs_frames), -1, -int(max(self._obs_frames)/(n_before-1)))))
+            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)-0.001, n_before).astype(np.int32)))  # list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
         else:
             obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
 

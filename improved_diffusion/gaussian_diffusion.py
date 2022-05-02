@@ -851,6 +851,7 @@ class GaussianDiffusion:
                     t=t_batch,
                     clip_denoised=clip_denoised,
                     model_kwargs=model_kwargs,
+                    latent_mask=latent_mask,
                 )
             vb.append(out["output"])
             xstart_mse.append(mean_flat((out["pred_xstart"] - x_start) ** 2, mask=latent_mask))
@@ -861,7 +862,7 @@ class GaussianDiffusion:
         xstart_mse = th.stack(xstart_mse, dim=1)
         mse = th.stack(mse, dim=1)
 
-        prior_bpd = self._prior_bpd(x_start)
+        prior_bpd = self._prior_bpd(x_start, latent_mask=latent_mask)
         total_bpd = vb.sum(dim=1) + prior_bpd
         return {
             "total_bpd": total_bpd,

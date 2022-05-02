@@ -144,7 +144,7 @@ def create_argparser():
         max_frames=10,
         save_latest_only=False,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
-        mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}"
+        mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}", or "differently-spaced-groups-no-marg"
         just_visualise=False,
         num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,

@@ -165,8 +165,6 @@ if __name__ == "__main__":
     if pickle_path.exists():
         metrics_pkl = pickle.load(open(pickle_path, "rb"))
         args.modes = [mode for mode in args.modes if mode not in metrics_pkl]
-    else:
-        metrics_pkl = {}
     print(f"Modes: {args.modes}")
     if len(args.modes) == 0:
         print("No metrics to compute.")
@@ -184,11 +182,15 @@ if __name__ == "__main__":
             data_fetch=data_fetch,
             T=args.T,
             num_samples=args.num_samples))
-    # Save all metrics as a pickle file
-    for mode in args.modes:
-        metrics_pkl[mode] = new_metrics[mode]
 
+    # Save all metrics as a pickle file (update it if it already exists)
     with test_util.Protect(pickle_path): # avoids race conditions
+        if pickle_path.exists():
+            metrics_pkl = pickle.load(open(pickle_path, "rb"))
+        else:
+            metrics_pkl = {}
+        for mode in args.modes:
+            metrics_pkl[mode] = new_metrics[mode]
         pickle.dump(metrics_pkl, open(pickle_path, "wb"))
 
     print(f"Saved metrics to {pickle_path}.")

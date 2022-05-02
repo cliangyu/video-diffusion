@@ -203,7 +203,7 @@ class TrainLoop:
     def sample_some_indices(self, max_indices, T):
         s = th.randint(low=1, high=max_indices+1, size=())
         max_scale = T / (s-0.999)
-        if self.mask_distribution == "differently-spaced-groups":
+        if self.mask_distribution in ["differently-spaced-groups", "differently-spaced-groups-no-marg"]:
             scale = np.exp(np.random.rand() * np.log(max_scale))
         elif self.mask_distribution == "consecutive-groups":
             scale = 1
@@ -230,6 +230,12 @@ class TrainLoop:
                 start_i = th.randint(low=0, high=T-self.max_frames+1, size=())
                 obs_row[start_i:start_i+n_obs] = 1.
                 latent_row[start_i+n_obs:start_i+n_obs+n_latent] = 1.
+            elif self.mask_distribution == "differently-spaced-groups-no-marg":
+                assert self.max_frames == T
+                while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
+                    indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=T))
+                    obs_row[indices] = 1.
+                latent_row += 1 - obs_row
             elif 'groups' in self.mask_distribution:
                 latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
                 while True:
@@ -536,7 +542,8 @@ class TrainLoop:
         rmse = ((error**2).mean()/latent_mask.mean()).sqrt()
         gather_and_log_videos('sample/', vis_all, log_as='array')
         n_samples_with_preset_masks = len(set_masks['obs']) * self.n_valid_repeats
-        gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
+        if n_samples_with_preset_masks > 0:
+            gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
         gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
         logger.logkv('timing/sampling_time', time()-sample_start)
