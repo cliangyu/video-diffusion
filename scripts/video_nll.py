@@ -27,7 +27,7 @@ from improved_diffusion import test_util
 from video_sample import get_masks, default_model_configs
 
 
-def get_eval_frame_indices(args):
+def get_eval_frame_indices(args, test_set_size):
     """
     TODO options for:
     - distribution from inference_utils
@@ -40,8 +40,8 @@ def get_eval_frame_indices(args):
         obs_lat_indices = list(frame_indices_iterator)
         obs_indices = [pair[0] for pair in obs_lat_indices]
         lat_indices = [pair[1] for pair in obs_lat_indices]
-        obs_indices = [obs_indices for _ in range(len(args.indices))]
-        lat_indices = [lat_indices for _ in range(len(args.indices))]
+        obs_indices = [obs_indices for _ in range(test_set_size)]
+        lat_indices = [lat_indices for _ in range(test_set_size)]
         print('generated inference frame indices')
         if os.path.exists(args.indices_path):
             print(f'Checking match to indices at {args.indices_path}')
@@ -87,12 +87,15 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     kinda_marg_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     frame_indices = torch.zeros_like(x0[:, :, 0, 0, 0]).int()
     for i, (obs_i, lat_i) in enumerate(zip(obs_indices, lat_indices)):
+        print(args.max_frames, len(obs_i), len(lat_i))
         x0[i, :len(obs_i)] = batch[i, obs_i]
         obs_mask[i, :len(obs_i)] = 1.
         frame_indices[i, :len(obs_i)] = torch.tensor(obs_i)
         x0[i, len(obs_i):len(obs_i)+len(lat_i)] = batch[i, lat_i]
         lat_mask[i, len(obs_i):len(obs_i)+len(lat_i)] = 1.
         frame_indices[i, len(obs_i):len(obs_i)+len(lat_i)] = torch.tensor(lat_i)
+    print(x0.shape, obs_mask.shape, lat_mask.shape, kinda_marg_mask.shape)
+    print(frame_indices)
     all_bpd = []
     all_metrics = {"vb": [], "mse": [], "xstart_mse": []}
     num_complete = 0
@@ -168,15 +171,13 @@ if __name__ == "__main__":
     args.out_dir = Path(args.out_dir) / inference_mode_str
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Writing to {args.out_dir}")
-    if args.indices_path is None:
-        args.indices_path = args.out_dir / f"{inference_mode_str}_indices.pt"
 
     # Load the test set
     dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
-    print(f"Dataset size = {len(dataset)}")
+    test_set_size = len(dataset)
+    print(f"Dataset size = {test_set_size}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
-        assert args.subset_size is None
         task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
         args.indices = list(range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
         print(f"Only generating predictions for the batch #{task_id}.")
@@ -189,7 +190,9 @@ if __name__ == "__main__":
     dataset = torch.utils.data.Subset(dataset, args.indices)
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    obs_indices, lat_indices = get_eval_frame_indices(args)
+    if args.indices_path is None:
+        args.indices_path = args.out_dir / f"{inference_mode_str}_frame_indices.pt"
+    obs_indices, lat_indices = get_eval_frame_indices(args, test_set_size)
     frame_indices = ([obs_indices[i] for i in args.indices],
                      [lat_indices[i] for i in args.indices],)
 
