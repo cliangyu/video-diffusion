@@ -134,6 +134,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
+    dataset.set_test()
     return dataset
 
 
@@ -252,6 +253,7 @@ class BaseDataset(Dataset):
         super().__init__()
         self.T = T
         self.path = Path(path)
+        self.is_test = False
 
     def __len__(self):
         path = self.get_src_path(self.path)
@@ -298,13 +300,16 @@ class BaseDataset(Dataset):
             return src_path
         return path
 
-    @staticmethod
-    def get_video_subsequence(video, T):
+    def set_test(self):
+        self.is_test = True
+        print('setting test mode')
+
+    def get_video_subsequence(self, video, T):
         if T is None:
             return video
         if T < len(video):
             # Take a subsequence of the video.
-            start_i = np.random.randint(len(video) - T + 1)
+            start_i = 0 if self.is_test else np.random.randint(len(video) - T + 1)
             video = video[start_i:start_i+T]
         assert len(video) == T
         return video
