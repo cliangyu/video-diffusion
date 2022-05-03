@@ -48,7 +48,7 @@ def get_masks(x0, num_obs):
 
 @torch.no_grad()
 def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
-                step_size=1):
+                step_size=1, optimal_schedule_path=None):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -58,7 +58,10 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
-    frame_indices_iterator = inference_util.inference_strategies[mode](video_length=T, num_obs=obs_length, max_frames=max_frames, step_size=step_size)
+    frame_indices_iterator = inference_util.inference_strategies[mode](
+        video_length=T, num_obs=obs_length,
+        max_frames=max_frames, step_size=step_size,
+        optimal_schedule_path=optimal_schedule_path)
 
     for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
         print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
@@ -88,7 +91,8 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     return samples.numpy()
 
 
-def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
+def main(args, model, diffusion, dataloader, dataset_indices=None):
+    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
     cnt = 0
@@ -105,7 +109,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
                 batch = batch.to(args.device)
                 recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                     batch=batch, max_frames=args.max_frames, obs_length=args.obs_length,
-                                    step_size=args.step_size)
+                                    step_size=args.step_size, optimal_schedule_path=optimal_schedule_path)
                 recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
                 for i in range(batch_size):
@@ -119,8 +123,10 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
 
 def visualise(args):
     vis = []
+    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
-        video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size
+        video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
+        optimal_schedule_path=optimal_schedule_path
     )
     exist_indices = list(range(args.obs_length))
     for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
@@ -135,7 +141,10 @@ def visualise(args):
     from improved_diffusion.train_util import concat_images_with_padding
     from PIL import Image
     vis = torch.stack(vis)
-    path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}.png"
+    path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
+    if args.optimal:
+        path += "_optimal"
+    path = f"{path}.png"
     Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
     print(f"Saved to {path}")
 
@@ -165,9 +174,10 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
+    parser.add_argument("--optimal", action='store_true', help="Use the optimal schedule for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py.")
     args = parser.parse_args()
 
-    if args.just_visualise:
+    if args.just_visualise and not args.optimal:
         visualise(args)
         exit()
 
@@ -234,9 +244,13 @@ if __name__ == "__main__":
         args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
     else:
         args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_frames}_{args.step_size}"
+    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
+
+    if args.just_visualise:
+        visualise(args)
+        exit()
 
     # Store model configs in a JSON file
     json_path = args.out_dir / "model_config.json"
@@ -247,4 +261,4 @@ if __name__ == "__main__":
         print(f"Saved model config at {json_path}")
 
     # Generate the samples
-    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=args.indices)
+    main(args, model, diffusion, dataloader, dataset_indices=args.indices)

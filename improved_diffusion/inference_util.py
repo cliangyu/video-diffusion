@@ -1,9 +1,11 @@
 import numpy as np
+import torch
+import time
 
 
 class InferenceStrategyBase:
     """ Inference strategies """
-    def __init__(self, video_length: int, num_obs: int, max_frames: int, step_size: int):
+    def __init__(self, video_length: int, num_obs: int, max_frames: int, step_size: int, optimal_schedule_path=None):
         """ Inference strategy base class. It provides an iterator that returns
             the indices of the frames that should be observed and the frames that should be generated.
 
@@ -12,19 +14,29 @@ class InferenceStrategyBase:
             num_obs (int): Number of frames that are observed from the beginning of the video.
             max_frames (int): Maximum number of frames (observed or latent) that can be passed to the model in one shot.
             step_size (int): Number of frames to generate in each step.
+            optimal_schedule_path (str): If you want to run this inference strategy with an optimal schedule,
+                pass in the path to the optimal schedule file here. Then, it will choose the observed
+                frames based on the optimal schedule file. Otherwise, it will behave normally.
+                The optimal schedule file is a .pt file containing a dictionary from step number to the
+                list of frames that should be observed in that step.
         """
         self._video_length = video_length
         self._max_frames = max_frames
         self._done_frames = set(range(num_obs))
         self._obs_frames = list(range(num_obs))
         self._step_size = step_size
-    
+        self.optimal_schedule = None if optimal_schedule_path is None else torch.load(optimal_schedule_path)
+        self._current_step = 0 # Counts the number of steps.
+
     def __next__(self):
         # Check if the video is fully generated.
         if self.is_done():
             raise StopIteration
         # Get the next indices from the function overloaded by each inference strategy.
         obs_frame_indices, latent_frame_indices = self.next_indices()
+        # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
+        if self.optimal_schedule is not None:
+            obs_frame_indices = self.optimal_schedule[self._current_step]
         # Type checks. Both observed and latent indices should be lists.
         assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
         # Make sure the observed frames are either osbserved or already generated before
@@ -32,14 +44,16 @@ class InferenceStrategyBase:
             assert idx in self._done_frames, f"Attempting to condition on frame {idx} while it is not generated yet.\nGenerated frames: {self._done_frames}\nObserving: {obs_frame_indices}\nGenerating: {latent_frame_indices}"
         assert np.all(np.array(latent_frame_indices) < self._video_length)
         self._done_frames.update([idx for idx in latent_frame_indices if idx not in self._done_frames])
+        self._current_step += 1
         return obs_frame_indices, latent_frame_indices
-    
+
     def is_done(self):
         return len(self._done_frames) >= self._video_length
-    
+
     def __iter__(self):
+        self.step = 0
         return self
-        
+
     def next_indices(self):
         raise NotImplementedError
 
@@ -47,7 +61,7 @@ class InferenceStrategyBase:
 class Autoregressive(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def next_indices(self):
         obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
         first_idx = obs_frame_indices[-1] + 1
@@ -69,7 +83,7 @@ class Independent(InferenceStrategyBase):
 class ReallyIndependent(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def next_indices(self):
         obs_frame_indices = []
         first_idx = max(self._done_frames) + 1
@@ -80,7 +94,7 @@ class ReallyIndependent(InferenceStrategyBase):
 class ExpPast(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
     def next_indices(self):
         cur_idx = max(self._done_frames) + 1
         distances_past = 2**np.arange(int(np.log2(cur_idx))) # distances from the observed frames (all in the past)
