@@ -814,7 +814,7 @@ class GaussianDiffusion:
         )
         return mean_flat(kl_prior, mask=latent_mask) / np.log(2.0)
 
-    def calc_bpd_loop(self, model, x_start, clip_denoised=True, model_kwargs=None, latent_mask=None):
+    def calc_bpd_loop_subsampled(self, model, x_start, clip_denoised=True, model_kwargs=None, latent_mask=None, t_seq=None):
         """
         Compute the entire variational lower-bound, measured in bits-per-dim,
         as well as other related quantities.
@@ -834,11 +834,13 @@ class GaussianDiffusion:
         """
         device = x_start.device
         batch_size = x_start.shape[0]
+        if t_seq is None:
+            t_seq = list(range(self.num_timesteps))[::-1]
 
         vb = []
         xstart_mse = []
         mse = []
-        for t in list(range(self.num_timesteps))[::-1]:
+        for t in t_seq:
             t_batch = th.tensor([t] * batch_size, device=device)
             noise = th.randn_like(x_start)
             x_t = self.q_sample(x_start=x_start, t=t_batch, noise=noise)
@@ -871,6 +873,12 @@ class GaussianDiffusion:
             "xstart_mse": xstart_mse,
             "mse": mse,
         }
+
+    def calc_bpd_loop(self, model, x_start, clip_denoised=True, model_kwargs=None, latent_mask=None):
+        return self.calc_bpd_loop_subsampled(
+            model=model, x_start=x_start, clip_denoised=clip_denoised,
+            model_kwargs=model_kwargs, latent_mask=latent_mask,
+            t_seq=list(range(self.num_timesteps))[::-1])
 
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):
