@@ -96,7 +96,7 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     obs_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     lat_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     kinda_marg_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
-    frame_indices = torch.zeros_like(x0[:, :, 0, 0, 0]).int()
+    frame_indices = torch.zeros_like(x0[:, :, 0, 0, 0]).long()
     for i, (obs_i, lat_i) in enumerate(zip(obs_indices, lat_indices)):
         x0[i, :len(obs_i)] = batch[i, obs_i]
         obs_mask[i, :len(obs_i)] = 1.
