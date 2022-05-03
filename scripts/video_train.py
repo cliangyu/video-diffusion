@@ -117,6 +117,9 @@ def main():
     if args.just_visualise:
         train_loop.visualise()
         exit()
+    if args.just_save_masks > 0:
+        train_loop.save_masks(args.just_save_masks)
+        exit()
     train_loop.run_loop()
 
 
@@ -146,6 +149,7 @@ def create_argparser():
         resume_id="",
         mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}", or "differently-spaced-groups-no-marg"
         just_visualise=False,
+        just_save_masks=0,
         num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,
         fake_seed=1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed

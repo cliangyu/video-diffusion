@@ -27,14 +27,19 @@ from improved_diffusion import test_util
 
 from video_sample import get_masks, default_model_configs
 
+mask_distributions = ["differently-spaced-groups"]
+
 
 def get_eval_frame_indices(args, test_set_size):
     """
-    TODO options for:
+    can get indices by either
     - distribution from inference_utils
     - loading from directory
     """
-    if args.inference_mode is not None:
+    if args.inference_mode in mask_distributions:
+        obs_indices, lat_indices = torch.load(args.indices_path)
+        print('loaded inference frame indices')
+    else:
         frame_indices_iterator = inference_strategies[args.inference_mode](
             video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size
         )
@@ -57,9 +62,6 @@ def get_eval_frame_indices(args, test_set_size):
                 assert i1 == i2
         else:
             torch.save((obs_indices, lat_indices), args.indices_path)
-    else:
-        obs_indices, lat_indices = torch.load(args.indices_path)
-        print('loaded inference frame indices')
     return obs_indices, lat_indices
 
 def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, frame_indices=None):
@@ -73,7 +75,6 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
             continue
         batch_obs_indices = frame_indices[0][cnt:cnt+len(batch)]
         batch_lat_indices = frame_indices[1][cnt:cnt+len(batch)]
-        x = batch_obs_indices
         returns = []
         n_index_types = len(batch_obs_indices[0])
         for i in range(n_index_types):
@@ -86,6 +87,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
         for j in range(len(returns['total_bpd'])):
             fname = fnames[j]
             pickle.dump({k: v[j] for k, v in returns.items()}, open(fname, 'wb'))
+            print('Saved to', fname)
         cnt += len(batch)
 
 def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_indices):
@@ -124,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--out_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
-    parser.add_argument("--inference_mode", required=True, choices=inference_strategies.keys())
+    parser.add_argument("--inference_mode", required=True, choices=list(inference_strategies.keys())+mask_distributions)
     parser.add_argument("--indices_path", type=str, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
@@ -172,7 +174,10 @@ if __name__ == "__main__":
     print(f"max_frames = {args.max_frames}")
 
     # Create the output directory (if does not exist)
-    inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    if args.inference_mode in mask_distributions:
+        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.T}"
+    else:
+        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
     args.out_dir = Path(args.out_dir) / inference_mode_str
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Writing to {args.out_dir}")

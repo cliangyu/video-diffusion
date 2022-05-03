@@ -592,6 +592,18 @@ class TrainLoop:
         gather_and_log_videos('visualise/mask', vis, log_as='array', pad_dim_h=4, pad_dim_v=12, pad_val=0, pad_ends=True)
         logger.dumpkvs()
 
+    def save_masks(self, n_masks):
+        # for use with video_nll
+        batch = th.zeros(1, self.T, 3, 64, 64)
+        obs_indices = []
+        lat_indices = []
+        for i in range(n_masks):
+            with RNG(i):
+                batch, obs_mask, latent_mask, kinda_marg_mask = self.sample_all_masks(batch, gather=False)
+            obs_indices += [[list(layer.nonzero(as_tuple=True)[0].flatten().numpy())] for layer in obs_mask.flatten(start_dim=2)]
+            lat_indices += [[list(layer.nonzero(as_tuple=True)[0].flatten().numpy())] for layer in latent_mask.flatten(start_dim=2)]
+        path = f"samples/indices/{self._args.mask_distribution}_{self._args.max_frames}_{self._args.T}_frame_indices.pt"
+        th.save((obs_indices, lat_indices), path)
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
     for i, c in enumerate(color):
