@@ -11,6 +11,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 import pickle
+import time
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
@@ -27,7 +28,7 @@ from improved_diffusion import test_util
 from video_sample import get_masks, default_model_configs
 
 
-def get_eval_frame_indices(args):
+def get_eval_frame_indices(args, test_set_size):
     """
     TODO options for:
     - distribution from inference_utils
@@ -40,12 +41,16 @@ def get_eval_frame_indices(args):
         obs_lat_indices = list(frame_indices_iterator)
         obs_indices = [pair[0] for pair in obs_lat_indices]
         lat_indices = [pair[1] for pair in obs_lat_indices]
-        obs_indices = [obs_indices for _ in range(len(args.indices))]
-        lat_indices = [lat_indices for _ in range(len(args.indices))]
+        obs_indices = [obs_indices for _ in range(test_set_size)]
+        lat_indices = [lat_indices for _ in range(test_set_size)]
         print('generated inference frame indices')
         if os.path.exists(args.indices_path):
             print(f'Checking match to indices at {args.indices_path}')
-            obs_to_check, lat_to_check = torch.load(args.indices_path)
+            try:
+                obs_to_check, lat_to_check = torch.load(args.indices_path)
+            except EOFError:  # possibly an issue with parallelism that we can solve by waiting for a while
+                time.sleep(5)
+                obs_to_check, lat_to_check = torch.load(args.indices_path)
             for i1, i2 in zip(obs_indices, obs_to_check):
                 assert i1 == i2
             for i1, i2 in zip(lat_indices, lat_to_check):
@@ -61,6 +66,11 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
+        fnames = [args.out_dir / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
+        if all([os.path.exists(f) for f in fnames]):
+            print('Already exist. Skipping', fnames)
+            cnt += len(batch)
+            continue
         batch_obs_indices = frame_indices[0][cnt:cnt+len(batch)]
         batch_lat_indices = frame_indices[1][cnt:cnt+len(batch)]
         x = batch_obs_indices
@@ -73,9 +83,8 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
                                               clip_denoised=args.clip_denoised,
                                               obs_indices=obs_indices, lat_indices=lat_indices))  # TODO normalise for just latent frames?
         returns = {k: np.stack([r[k] for r in returns], axis=1) for k in returns[0].keys()}
-        print({k: v.shape for k, v in returns.items()})
         for j in range(len(returns['total_bpd'])):
-            fname = args.out_dir / f"elbo_{cnt+j}{postfix}.pkl"
+            fname = fnames[j]
             pickle.dump({k: v[j] for k, v in returns.items()}, open(fname, 'wb'))
         cnt += len(batch)
 
@@ -93,9 +102,6 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
         x0[i, len(obs_i):len(obs_i)+len(lat_i)] = batch[i, lat_i]
         lat_mask[i, len(obs_i):len(obs_i)+len(lat_i)] = 1.
         frame_indices[i, len(obs_i):len(obs_i)+len(lat_i)] = torch.tensor(lat_i)
-    all_bpd = []
-    all_metrics = {"vb": [], "mse": [], "xstart_mse": []}
-    num_complete = 0
     model_kwargs = dict(frame_indices=frame_indices,
                         x0=x0,
                         obs_mask=obs_mask,
@@ -104,9 +110,11 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     metrics = diffusion.calc_bpd_loop(
         model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs
     )
-    # sum (rather than mean) over frame dimension by multiplying by number of frames
-    metrics = {k: v*n_latents.sum() for (k, v), n_latents in zip(metrics.items(), lat_mask.flatten(start_dim=1).sum(dim=1))}
+    n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
+
     metrics = {k: v.sum(dim=1) if v.ndim > 1 else v for k, v in metrics.items()}
+    # sum (rather than mean) over frame dimension by multiplying by number of frames
+    metrics = {k: v*n_latents_batch for (k, v) in metrics.items()}
     metrics = {k: v.detach().cpu().numpy() for k, v in metrics.items()}
     return metrics
 
@@ -168,15 +176,13 @@ if __name__ == "__main__":
     args.out_dir = Path(args.out_dir) / inference_mode_str
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Writing to {args.out_dir}")
-    if args.indices_path is None:
-        args.indices_path = args.out_dir / f"{inference_mode_str}_indices.pt"
 
     # Load the test set
     dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
-    print(f"Dataset size = {len(dataset)}")
+    test_set_size = len(dataset)
+    print(f"Dataset size = {test_set_size}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
-        assert args.subset_size is None
         task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
         args.indices = list(range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
         print(f"Only generating predictions for the batch #{task_id}.")
@@ -189,7 +195,9 @@ if __name__ == "__main__":
     dataset = torch.utils.data.Subset(dataset, args.indices)
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    obs_indices, lat_indices = get_eval_frame_indices(args)
+    if args.indices_path is None:
+        args.indices_path = args.out_dir / f"{inference_mode_str}_frame_indices.pt"
+    obs_indices, lat_indices = get_eval_frame_indices(args, test_set_size)
     frame_indices = ([obs_indices[i] for i in args.indices],
                      [lat_indices[i] for i in args.indices],)
 
