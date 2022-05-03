@@ -131,20 +131,22 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_to_sample = self._step_size
 
         # select the grid of latent_frame_indices (shifting by 1 to avoid already-existing frames)
-        latent_frame_indices = []
         idx = self.last_sampled_idx + self.sample_every
         if len([i for i in range(idx, self._video_length) if i not in self._done_frames]) == 0:
             # reset if there are no frames left to sample after idx
             self.current_level += 1
             self.last_sampled_idx = 0
             idx = min(i for i in range(self._video_length) if i not in self._done_frames) - 1 + self.sample_every
-
-        while len(latent_frame_indices) < n_to_sample and idx < self._video_length:
-            if idx not in self._done_frames:
-                latent_frame_indices.append(idx)
-                idx +=  self.sample_every
-            elif idx in self._done_frames:
-                idx += 1
+        if self.current_level == 1:
+            latent_frame_indices = list(int(i) for i in np.linspace(max(self._obs_frames)+1, self._video_length-0.001, n_to_sample))
+        else:
+            latent_frame_indices = []
+            while len(latent_frame_indices) < n_to_sample and idx < self._video_length:
+                if idx not in self._done_frames:
+                    latent_frame_indices.append(idx)
+                    idx += self.sample_every
+                elif idx in self._done_frames:
+                    idx += 1
 
         # observe any frames in between latent frames
         obs_frame_indices = [i for i in range(min(latent_frame_indices), max(latent_frame_indices)) if i in self._done_frames]
@@ -165,7 +167,7 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_before = n_to_condition_on - len(obs_frame_indices)
         # observe `n_before` frames before...
         if self.current_level == 1:
-            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)-0.001, n_before).astype(np.int32)))  # list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
+            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)+0.999, n_before).astype(np.int32)))  # list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
         else:
             obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
 
@@ -174,39 +176,39 @@ class HierarchyNLevel(InferenceStrategyBase):
         return obs_frame_indices, latent_frame_indices
 
 
-class Hierarchy2Level(InferenceStrategyBase):
-    def next_indices(self):
-        n_to_condition_on = self._max_frames - self._step_size
-        n_to_sample = self._step_size
-        if len(self._done_frames) == len(self._obs_frames):
-            obs_frame_indices = [int(i) for i in np.linspace(min(self._obs_frames), max(self._obs_frames), n_to_condition_on)]
-            latent_frame_indices = [int(i) for i in np.linspace(max(self._obs_frames)+1, self._video_length-1, n_to_sample)]
-        else:
-            latent_frame_indices = []
-            idx = max(self._obs_frames)
-            while True:
-                idx += 1
-                if idx >= self._video_length or len(latent_frame_indices) == n_to_sample:
-                    break
-                elif idx not in self._done_frames:
-                    latent_frame_indices.append(idx)
-            obs_frame_indices = []
-            for idx in range(min(latent_frame_indices)+1, max(latent_frame_indices)):
-                # observe indices in the middle of the latents
-                if idx not in latent_frame_indices:
-                    obs_frame_indices.append(idx)
-            remaining_to_condition_on = n_to_condition_on - len(obs_frame_indices)
-            n_cond_after = remaining_to_condition_on // 2
-            n_cond_before = remaining_to_condition_on - n_cond_after
-            obs_frame_indices.extend(range(min(latent_frame_indices)-n_cond_before, min(latent_frame_indices)))
-            idx_after = max(latent_frame_indices)
-            while len(obs_frame_indices) < n_to_condition_on:
-                idx_after += 1
-                if idx_after >= self._video_length:
-                    break
-                elif idx_after in self._done_frames:
-                    obs_frame_indices.append(idx_after)
-        return obs_frame_indices, latent_frame_indices
+# class Hierarchy2Level(InferenceStrategyBase):
+#     def next_indices(self):
+#         n_to_condition_on = self._max_frames - self._step_size
+#         n_to_sample = self._step_size
+#         if len(self._done_frames) == len(self._obs_frames):
+#             obs_frame_indices = [int(i) for i in np.linspace(min(self._obs_frames), max(self._obs_frames), n_to_condition_on)]
+#             latent_frame_indices = [int(i) for i in np.linspace(max(self._obs_frames)+1, self._video_length-1, n_to_sample)]
+#         else:
+#             latent_frame_indices = []
+#             idx = max(self._obs_frames)
+#             while True:
+#                 idx += 1
+#                 if idx >= self._video_length or len(latent_frame_indices) == n_to_sample:
+#                     break
+#                 elif idx not in self._done_frames:
+#                     latent_frame_indices.append(idx)
+#             obs_frame_indices = []
+#             for idx in range(min(latent_frame_indices)+1, max(latent_frame_indices)):
+#                 # observe indices in the middle of the latents
+#                 if idx not in latent_frame_indices:
+#                     obs_frame_indices.append(idx)
+#             remaining_to_condition_on = n_to_condition_on - len(obs_frame_indices)
+#             n_cond_after = remaining_to_condition_on // 2
+#             n_cond_before = remaining_to_condition_on - n_cond_after
+#             obs_frame_indices.extend(range(min(latent_frame_indices)-n_cond_before, min(latent_frame_indices)))
+#             idx_after = max(latent_frame_indices)
+#             while len(obs_frame_indices) < n_to_condition_on:
+#                 idx_after += 1
+#                 if idx_after >= self._video_length:
+#                     break
+#                 elif idx_after in self._done_frames:
+#                     obs_frame_indices.append(idx_after)
+#         return obs_frame_indices, latent_frame_indices
 
 
 def get_hierarchy_n_level(n):
