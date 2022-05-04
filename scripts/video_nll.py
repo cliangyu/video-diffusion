@@ -110,7 +110,7 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
                         latent_mask=lat_mask,
                         kinda_marg_mask=kinda_marg_mask)
     metrics = diffusion.calc_bpd_loop(
-        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs
+        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, latent_mask=lat_mask
     )
     n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
 
