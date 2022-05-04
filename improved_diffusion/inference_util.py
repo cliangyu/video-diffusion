@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import time
+import lpips as lpips_metric
 
 
 class InferenceStrategyBase:
@@ -56,6 +57,73 @@ class InferenceStrategyBase:
 
     def next_indices(self):
         raise NotImplementedError
+
+
+class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
+    def __init__(self, videos, distance, *args, **kwargs):
+        self.videos = videos
+        if distance == 'mse':
+            self.distance_func = lambda a, b: ((a - b)**2)
+        elif distance == 'lpips':
+            net = lpips_metric.LPIPS(net='alex', spatial=False).to(videos.device)
+            self.distance_func = lambda a, b: net(a, b).flatten(start_dim=1).mean(dim=1).cpu().numpy()
+        else:
+            raise NotImplementedError
+        super().__init__(*args, **kwargs)
+
+    def select_obs_indices(self, possible_next_indices, n):
+        batch_size = len(self.videos)
+        distances_from_start = []
+        for i in range(1, len(possible_next_indices)):
+            i1 = possible_next_indices[0]
+            i2 = possible_next_indices[i]
+            distances_from_start.append(self.distance_func(self.videos[:, i1], self.videos[:, i2]))
+        distances_from_start = [np.zeros_like(distances_from_start[0])] + distances_from_start  # representing zero distance for first frame
+        distances_from_start = np.stack(distances_from_start, axis=1)
+        relative_distances = distances_from_start / distances_from_start.max(axis=1, keepdims=True)
+        observe_when_distance_exceeds = np.linspace(0, 1, n)
+        batch_indices = []
+        for j in range(batch_size):
+            indices = []
+            skipped = 0
+            for threshold in observe_when_distance_exceeds[::-1]:
+                try:
+                    first_index_exceeding_threshold = next(i for i in possible_next_indices if relative_distances[j, i] >= threshold and i not in indices)
+                    indices.append(first_index_exceeding_threshold)
+                except StopIteration:
+                    skipped += 1
+            batch_indices.append(indices)
+        # TODO indices may still not be full
+        return batch_indices
+
+    def __next__(self):
+        # Check if the video is fully generated.
+        if self.is_done():
+            raise StopIteration
+        # Get the next indices from the function overloaded by each inference strategy.
+        obs_frame_indices, latent_frame_indices = self.next_indices()
+        # Type checks. Both observed and latent indices should be lists.
+        assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
+        # Make sure the observed frames are either osbserved or already generated before
+        for idx in np.array(obs_frame_indices).flatten():
+            assert idx in self._done_frames, f"Attempting to condition on frame {idx} while it is not generated yet.\nGenerated frames: {self._done_frames}\nObserving: {obs_frame_indices}\nGenerating: {latent_frame_indices}"
+        assert np.all(np.array(latent_frame_indices) < self._video_length)
+        self._done_frames.update([idx for idx in latent_frame_indices if idx not in self._done_frames])
+        self._current_step += 1
+        return obs_frame_indices, [latent_frame_indices]*len(obs_frame_indices)
+
+
+class AdaptiveAutoregressive(AdaptiveInferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def next_indices(self):
+        first_idx = max(self._done_frames) + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
+        possible_obs_indices = sorted(self._done_frames)[::-1]
+        n_obs = self._max_frames - self._step_size
+        obs_frame_indices = self.select_obs_indices(possible_obs_indices, n_obs)
+        return obs_frame_indices, latent_frame_indices
 
 
 class Autoregressive(InferenceStrategyBase):
@@ -181,7 +249,7 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_before = n_to_condition_on - len(obs_frame_indices)
         # observe `n_before` frames before...
         if self.current_level == 1:
-            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)+0.999, n_before).astype(np.int32)))  # list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
+            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)+0.999, n_before).astype(np.int32)))
         else:
             obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
 
@@ -205,4 +273,5 @@ inference_strategies = {
     'hierarchy-3': get_hierarchy_n_level(3),
     'hierarchy-4': get_hierarchy_n_level(4),
     'hierarchy-5': get_hierarchy_n_level(5),
+    'adaptive-autoreg': AdaptiveAutoregressive,
 }

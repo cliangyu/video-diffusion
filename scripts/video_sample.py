@@ -58,18 +58,28 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
+    adaptive_kwargs = dict(videos=batch, distance='lpips') if 'adaptive' in mode else {}
     frame_indices_iterator = inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
         max_frames=max_frames, step_size=step_size,
-        optimal_schedule_path=optimal_schedule_path)
+        optimal_schedule_path=optimal_schedule_path,
+        **adaptive_kwargs
+    )
 
     for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
         print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
         # Prepare network's input
-        x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
-        frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
+        if 'adaptive' in mode:
+            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=1)
+            x0 = torch.stack([samples[i, fi] for i, fi in enumerate(frame_indices)], dim=0).clone()
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices[0]))
+            n_latent = len(latent_frame_indices[0])
+        else:
+            x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
+            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
+            n_latent = len(latent_frame_indices)
         # Prepare masks
-        obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
         print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
         print(f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}")
         print(f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}")
@@ -87,7 +97,12 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
             latent_mask=latent_mask,
             return_attn_weights=False)
         # Fill in the generated frames
-        samples[:, latent_frame_indices] = local_samples[:, -len(latent_frame_indices):].cpu()
+        if 'adaptive' in mode:
+            n_obs = len(obs_frame_indices[0])
+            for i, li in enumerate(latent_frame_indices):
+                samples[i, li] = local_samples[i, n_obs:].cpu()
+        else:
+            samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
     return samples.numpy()
 
 
