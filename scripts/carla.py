@@ -17,6 +17,8 @@ scale = 1
 parser = argparse.ArgumentParser()
 parser.add_argument('save_dir', type=str, help="Where to save the generated videos/coords.")
 parser.add_argument('--port', type=int, default=5555, help="5555 is the server with other cars. Currently there are no other servers")
+parser.add_argument('--start_index', type=int, default=0)
+parser.add_argument('--n_indices', type=int, default=5)
 args = parser.parse_args()
 
 sensors_dict = {
@@ -24,23 +26,13 @@ sensors_dict = {
         'sensor_type': 'camera',
         'camera_type': 'rgb-camera',
         'bounding_box': False,
-        # 'track_actor_types': 'all', #Actors, # or 'all'
         'track_actor_types': SensorSettings.Available_Tracked_Actors,
         'show_bounding_boxes': False,
         'world_sensor': False,
-        # 'resolution': Resolution(128, 128),
         'resolution': def_res,
-        'location': SensorSettings.Location(x=2, z=3, y=0),
+        'location': SensorSettings.Location(x=2, z=2, y=0),
         'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
         'fov': 120.0,
-        # 'sensor_type': 'camera',
-        # 'camera_type': 'rgb-camera',
-        # 'bounding_box': False,
-        # 'show_bounding_boxes': False,
-        # 'world_sensor': False,
-        # 'resolution': def_res,
-        # 'location': SensorSettings.Location(x=0, z=2.8, y=0),
-        # 'rotation': SensorSettings.Rotation(yaw=0, roll=0, pitch=0),
     },
 }
 
@@ -66,10 +58,9 @@ def reset_frames():
     return {'images':[], 'coords': [], 'actions': []}
 frames = reset_frames()
 
-repeats = 500
 T = 1000
 walltime = time.time()
-for i in range(0, T*repeats):
+for i in range(0, T*args.n_indices):
     action = info['expert_action']
     obs, reward, done, info = env.step(action)
     frames['images'].append(obs['sensor_data']['front-cam']['image'])
@@ -77,13 +68,14 @@ for i in range(0, T*repeats):
     frames['actions'].append(action)
 
     if i % T == T-1:
+        i_save = args.start_index + i//T
         video = torch.stack([torch.tensor(img) for img in frames['images']])
-        torch.save(video, os.path.join(args.save_dir, f'video_{i//T}.pt'))
-        imageio.mimwrite(os.path.join(args.save_dir, f'video_{i//T}.mp4'), frames['images'], fps=10, quality=7)
+        torch.save(video, os.path.join(args.save_dir, f'video_{i_save}.pt'))
+        imageio.mimwrite(os.path.join(args.save_dir, f'video_{i_save}.mp4'), frames['images'], fps=10, quality=7)
         coords = np.array(frames['coords'])
-        np.save(os.path.join(args.save_dir, f'coords_{i//T}.npy'), coords)
+        np.save(os.path.join(args.save_dir, f'coords_{i_save}.npy'), coords)
         actions = np.array(frames['actions'])
-        np.save(os.path.join(args.save_dir, f'actions_{i//T}.npy'), coords)
+        np.save(os.path.join(args.save_dir, f'actions_{i_save}.npy'), coords)
         frames = reset_frames()
         print(f'generated {T} frames in {time.time()-walltime} seconds')
         walltime = time.time()
