@@ -138,7 +138,8 @@ def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
         return
     SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
     SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
-    array_arg = " --array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
+    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
+    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg}"
     job_name = "viddiff-opt-sched"
 
     submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
