@@ -119,7 +119,8 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
 
 
 def get_test_dataset(dataset_name, T=None, image_size=None):
-    data_path = video_data_paths_dict[dataset_name]
+    data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
+    data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
 
@@ -139,7 +140,8 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
 
 
 def get_train_dataset(dataset_name, T=None, image_size=None):
-    data_path = video_data_paths_dict[dataset_name]
+    data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
+    data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
 
@@ -275,7 +277,7 @@ class BaseDataset(Dataset):
 
     def loaditem(self, path):
         raise NotImplementedError
-    
+
     def postprocess_video(self, video):
         raise NotImplementedError
 
@@ -328,14 +330,14 @@ class MazesDataset(BaseDataset):
 
     def loaditem(self, path):
         return torch.load(path)
-    
+
     def postprocess_video(self, video):
         # resizes from 84x84 to 64x64
         byte_to_tensor = lambda x: ToTensor()(Resize(64)((Image.open(io.BytesIO(x)))))
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
         return video
-        
+
 
 class GQNMazesDataset(BaseDataset):
     """ based on https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
@@ -350,13 +352,13 @@ class GQNMazesDataset(BaseDataset):
 
     def loaditem(self, path):
         return np.load(path)
-    
+
     def postprocess_video(self, video):
         byte_to_tensor = lambda x: ToTensor()(x)
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
         return video
-        
+
 
 class MineRLDataset(BaseDataset):
     def __init__(self, path, shard, num_shards, T):
@@ -369,7 +371,7 @@ class MineRLDataset(BaseDataset):
 
     def loaditem(self, path):
         return np.load(path)
-    
+
     def postprocess_video(self, video):
         byte_to_tensor = lambda x: ToTensor()(x)
         video = torch.stack([byte_to_tensor(frame) for frame in video])
