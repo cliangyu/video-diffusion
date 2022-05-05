@@ -132,9 +132,13 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
             inference_schedule = {}
 
 
-def submit(remaining_steps, time="3:00:00"):
+def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
+    if len(remaining_steps) == 0:
+        print("Nothing left to do!")
+        return
     SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
-    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL" + " --array " + ",".join(map(str, remaining_steps))
+    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
+    array_arg = " --array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
     job_name = "viddiff-opt-sched"
 
     submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
@@ -175,7 +179,9 @@ if __name__ == "__main__":
     parser.add_argument("--subset_size", type=int, default=8,
                         help="If not None, only use a subset of the dataset. Default is 50.")
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
+    # Job submission arguments
     parser.add_argument("--submit", action="store_true", help="If given, figures out which steps of the optimal schedule are remaining to be optimized, then submits an array job doing them.")
+    parser.add_argument("--max_slurm_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -233,7 +239,7 @@ if __name__ == "__main__":
             video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size)
         num_steps = len(list(frame_indices_iterator))
         remaining_steps = [step for step in range(num_steps) if step not in saved_schedule]
-        submit(remaining_steps, time="3:00:00")
+        submit(remaining_steps, time="3:00:00", max_slurm_array=args.max_slurm_array)
         quit()
 
     # Load the test set
