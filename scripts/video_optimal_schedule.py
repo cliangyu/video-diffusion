@@ -47,7 +47,7 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
                         latent_mask=lat_mask,
                         kinda_marg_mask=kinda_marg_mask)
     metrics = diffusion.calc_bpd_loop_subsampled(
-        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, t_seq=t_seq
+        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, t_seq=t_seq, latent_mask=lat_mask
     )
     n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
 
@@ -121,13 +121,14 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
         obs_frame_indices = sorted(list(obs_frame_indices))
         inference_schedule[cnt] = obs_frame_indices
         print(f"Step #{cnt}:\n\tLatent: {latent_frame_indices}\n\tObserved: {obs_frame_indices}")
-    with test_util.Protect(schedule_path):
-        # Re-load the test schedule, in case it was modified by another process.
-        saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
-        for k,v in inference_schedule.items():
-            assert k not in saved_schedule, f"Found {k} in the saved schedule!"
-            saved_schedule[k] = v
-        torch.save(inference_schedule, schedule_path)
+        with test_util.Protect(schedule_path):
+            # Re-load the test schedule, in case it was modified by another process.
+            saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
+            for k,v in inference_schedule.items():
+                assert k not in saved_schedule, f"Found {k} in the saved schedule!"
+                saved_schedule[k] = v
+            torch.save(saved_schedule, schedule_path)
+            inference_schedule = {}
 
 
 if __name__ == "__main__":
