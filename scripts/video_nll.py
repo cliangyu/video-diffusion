@@ -112,11 +112,10 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     metrics = diffusion.calc_bpd_loop(
         model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, latent_mask=lat_mask
     )
-    n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
 
     metrics = {k: v.sum(dim=1) if v.ndim > 1 else v for k, v in metrics.items()}
     # sum (rather than mean) over frame dimension by multiplying by number of frames
-    metrics = {k: v*n_latents_batch for (k, v) in metrics.items()}
+    metrics = {k: v*args.max_frames for (k, v) in metrics.items()}
     metrics = {k: v.detach().cpu().numpy() for k, v in metrics.items()}
     return metrics
 
