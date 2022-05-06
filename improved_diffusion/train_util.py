@@ -203,7 +203,7 @@ class TrainLoop:
     def sample_some_indices(self, max_indices, T):
         s = th.randint(low=1, high=max_indices+1, size=())
         max_scale = T / (s-0.999)
-        if self.mask_distribution in ["differently-spaced-groups", "differently-spaced-groups-no-marg"]:
+        if self.mask_distribution in ["differently-spaced-groups", "differently-spaced-groups-no-marg"] or 'linspace' in self.mask_distribution:
             scale = np.exp(np.random.rand() * np.log(max_scale))
         elif self.mask_distribution == "consecutive-groups":
             scale = 1
@@ -230,6 +230,18 @@ class TrainLoop:
                 start_i = th.randint(low=0, high=T-self.max_frames+1, size=())
                 obs_row[start_i:start_i+n_obs] = 1.
                 latent_row[start_i+n_obs:start_i+n_obs+n_latent] = 1.
+            elif 'linspace-no-obs' in self.mask_distribution:
+                low, high, n = map(int, self.mask_distribution.split('-')[-3:])  # for frameskip set T=frameskip*(max_frames-1)+1
+                indices = th.linspace(low, high, n).long()
+                latent_row[indices] = 1.
+            elif 'linspace' in self.mask_distribution:
+                low, high, n = map(int, self.mask_distribution.split('-')[1:])  # for frameskip set T=frameskip*(max_frames-1)+1
+                indices = th.linspace(low, high, n).long()
+                latent_row[indices] = 1.
+                while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
+                    index_indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=N)).long()
+                    obs_row[indices[index_indices]] = 1.
+                    latent_row[indices[index_indices]] = 0.
             elif self.mask_distribution == "differently-spaced-groups-no-marg":
                 assert self.max_frames == T
                 while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
