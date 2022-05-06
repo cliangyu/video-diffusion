@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision.transforms import ToTensor, Resize
 from pathlib import Path
 import shutil
+import glob
 
 NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
@@ -20,6 +21,7 @@ video_data_paths_dict = {
     "mazes":        "datasets/mazes-torch",
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
+    "carla_no_traffic": "datasets/carla-no-traffic",
 }
 
 default_T_dict = {
@@ -27,6 +29,7 @@ default_T_dict = {
     "mazes":        300,
     "mazes_cwvae":  300,
     "bouncy_balls": 100,
+    "carla_no_traffic": 1000,
 }
 
 default_image_size_dict = {
@@ -34,6 +37,7 @@ default_image_size_dict = {
     "mazes":        64,
     "mazes_cwvae":  64,
     "bouncy_balls": 32,
+    "carla_no_traffic": 128,
 }
 
 
@@ -108,6 +112,9 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
+    elif dataset_name == "carla_no_traffic":
+        data_path = os.path.join(data_path, "train")
+        dataset = CarlaDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
@@ -133,6 +140,9 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "test")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
+    elif dataset_name == "carla_no_traffic":
+        data_path = os.path.join(data_path, "test")
+        dataset = CarlaDataset(data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
     dataset.set_test()
@@ -151,6 +161,9 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
+    elif dataset_name == "carla_no_traffic":
+        data_path = os.path.join(data_path, "train")
+        dataset = CarlaDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
@@ -340,6 +353,18 @@ class MazesDataset(BaseDataset):
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
         return video
+
+
+class CarlaDataset(MazesDataset):
+    def getitem_path(self, idx):
+        return self.path / f"video_{idx}.pt"
+
+    def postprocess_video(self, video):
+        return -1 + 2 * (video.permute(0, 3, 1, 2).float()/255)
+
+    def __len__(self):
+        path = self.get_src_path(self.path)
+        return len(glob.glob(os.path.join(path, 'video_*.pt')))
 
 
 class GQNMazesDataset(BaseDataset):

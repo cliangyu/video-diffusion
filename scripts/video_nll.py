@@ -126,7 +126,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--out_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
-    parser.add_argument("--inference_mode", required=True, choices=inference_strategies.keys())
+    parser.add_argument("--inference_mode", required=True)
     parser.add_argument("--indices_path", type=str, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
