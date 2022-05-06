@@ -151,6 +151,9 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
+    elif dataset_name == "mazes_cwvae":
+        data_path = os.path.join(data_path, "train")
+        dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
     return dataset
