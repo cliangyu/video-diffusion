@@ -12,7 +12,7 @@ class Protect(FileLock):
         super().__init__(lock_path, timeout=timeout, **kwargs)
 
 
-def get_samples_root_path(args, model_step):
+def get_model_results_path(args, model_step):
     """
         args is expected to have the following attributes:
         - use_ddim
@@ -29,7 +29,9 @@ def get_samples_root_path(args, model_step):
     # Create the output directory (if does not exist)
     if args.out_dir is None:
         checkpoint_path = Path(args.checkpoint_path)
-        name = f"{checkpoint_path.stem}_{model_step}"
+        name = f"{checkpoint_path.stem}"
+        if name.endswith("latest"):
+            name += f"_{model_step}"
         if postfix != "":
             name += postfix
         path = None
@@ -47,9 +49,14 @@ def get_eval_run_identifier(args):
     """
         args is expected to have the following attributes:
         - inference_mode
+        - optimal
         - max_frames
         - step_size
         - T
         - obs_length
     """
-    return f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    res = args.inference_mode
+    if args.optimal:
+        res += "_optimal"
+    res += f"_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    return res
