@@ -82,7 +82,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
             lat_indices = [b[i] for b in batch_lat_indices]
             returns.append(run_bpd_evaluation(model=model, diffusion=diffusion, batch=batch,
                                               clip_denoised=args.clip_denoised,
-                                              obs_indices=obs_indices, lat_indices=lat_indices))  # TODO normalise for just latent frames?
+                                              obs_indices=obs_indices, lat_indices=lat_indices))
         returns = {k: np.stack([r[k] for r in returns], axis=1) for k in returns[0].keys()}
         for j in range(len(returns['total_bpd'])):
             fname = fnames[j]
