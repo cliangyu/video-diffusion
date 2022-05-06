@@ -244,7 +244,8 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    args.out_dir = test_util.get_samples_root_path(args, model_step) / test_util.get_eval_run_identifier(args)
+    args.out_dir = test_util.get_model_results_path(args, model_step) / test_util.get_eval_run_identifier(args)
+    args.out_dir = args.out_dir / "samples"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
 
