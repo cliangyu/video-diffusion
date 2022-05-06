@@ -297,7 +297,8 @@ class TrainLoop:
         return new_mask.view(B, effective_T, 1, 1, 1), new_batch, new_tensors, indices
 
     def run_loop(self):
-        gather_and_log_videos('data/', next(self.data)[0], log_as='both')
+        if 'carla' not in self._args.dataset:
+            gather_and_log_videos('data/', next(self.data)[0], log_as='both')
         last_sample_time = time()
         while (
             not self.lr_anneal_steps
