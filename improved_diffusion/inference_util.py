@@ -66,7 +66,7 @@ class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
             self.distance_func = lambda a, b: ((a - b)**2)
         elif distance == 'lpips':
             net = lpips_metric.LPIPS(net='alex', spatial=False).to(videos.device)
-            self.distance_func = lambda a, b: net(a, b).flatten(start_dim=1).mean(dim=1).cpu().numpy()
+            self.distance_func = lambda a, b: net(a, b).flatten(start_dim=1).mean(dim=1).detach().cpu().numpy()
         else:
             raise NotImplementedError
         super().__init__(*args, **kwargs)
@@ -89,11 +89,12 @@ class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
             for threshold in observe_when_distance_exceeds[::-1]:
                 try:
                     first_index_exceeding_threshold = next(i for i in possible_next_indices if relative_distances[j, i] >= threshold and i not in indices)
-                    indices.append(first_index_exceeding_threshold)
                 except StopIteration:
-                    skipped += 1
+                    print('WARNING: couldn\'t find suitable index in adaptive index selection')
+                    first_index_exceeding_threshold = next(i for i in possible_next_indices if i not in indices)
+                indices.append(first_index_exceeding_threshold)
             batch_indices.append(indices)
-        # TODO indices may still not be full
+        assert len(indices) == n
         return batch_indices
 
     def __next__(self):

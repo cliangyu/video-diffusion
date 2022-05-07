@@ -8,6 +8,7 @@ import os
 from tqdm.auto import tqdm
 from pathlib import Path
 import json
+from PIL import Image
 
 from improved_diffusion.script_util import (
     video_model_and_diffusion_defaults,
@@ -137,31 +138,52 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    vis = []
     optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
+    if 'adaptive' in args.inference_mode:
+        dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
+        dataset = get_test_dataset(dataset_name=dataset_name, T=args.T)
+        batch = next(iter(DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)))[0]
+        adaptive_kwargs = dict(videos=batch, distance='lpips')
+    else:
+        adaptive_kwargs = {}
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
         video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
-        optimal_schedule_path=optimal_schedule_path
+        optimal_schedule_path=optimal_schedule_path,
+        **adaptive_kwargs
     )
-    exist_indices = list(range(args.obs_length))
-    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
-        print(obs_frame_indices, latent_frame_indices)
-        exist_indices.extend(latent_frame_indices)
-        new_layer = torch.zeros((args.T, 3)).int()
-        new_layer[exist_indices, 0] = 50
-        new_layer[obs_frame_indices, 0] = 255
-        new_layer[latent_frame_indices, 2] = 255
-        vis.append(new_layer)
-        vis.append(new_layer*0)
-    from improved_diffusion.train_util import concat_images_with_padding
-    from PIL import Image
-    vis = torch.stack(vis)
+
+    def visualise_obs_lat_sequence(sequence, index, path):
+        """ if index is None, expects sequence to be a list of tuples of form (list, list)
+            if index is given, expects sequence to be a list of tuples of form (list of lists (from which index i is taken), list of lists (from which index i is taken))
+        """
+        vis = []
+        exist_indices = list(range(args.obs_length))
+        for obs_frame_indices, latent_frame_indices in sequence:
+            if index is not None:
+                obs_frame_indices, latent_frame_indices = obs_frame_indices[index], latent_frame_indices[index]
+            exist_indices.extend(latent_frame_indices)
+            new_layer = torch.zeros((args.T, 3)).int()
+            new_layer[exist_indices, 0] = 50
+            new_layer[obs_frame_indices, 0] = 255
+            new_layer[latent_frame_indices, 2] = 255
+            vis.append(new_layer)
+            vis.append(new_layer*0)
+        vis = torch.stack(vis)
+        if index is not None:
+            path = f"{path}_index-{index}"
+        path = f"{path}.png"
+        Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
+        print(f"Saved to {path}")
+
+    indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if args.optimal:
         path += "_optimal"
-    path = f"{path}.png"
-    Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
-    print(f"Saved to {path}")
+    if 'adaptive' in args.inference_mode:
+        for i in range(len(batch)):
+            visualise_obs_lat_sequence(indices, i, path)
+    else:
+        visualise_obs_lat_sequence(indices, None, path)
 
 
 if __name__ == "__main__":
