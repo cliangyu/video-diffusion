@@ -85,7 +85,6 @@ class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
         batch_indices = []
         for j in range(batch_size):
             indices = []
-            skipped = 0
             for threshold in observe_when_distance_exceeds[::-1]:
                 try:
                     first_index_exceeding_threshold = next(i for i in possible_next_indices if relative_distances[j, i] >= threshold and i not in indices)
