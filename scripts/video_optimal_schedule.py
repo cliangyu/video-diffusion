@@ -5,7 +5,8 @@ import torch
 import numpy as np
 from torch.utils.data import DataLoader
 from argparse import ArgumentParser, Namespace
-import os
+import os, sys
+import subprocess
 from tqdm.auto import tqdm
 from pathlib import Path
 import json
@@ -47,7 +48,7 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
                         latent_mask=lat_mask,
                         kinda_marg_mask=kinda_marg_mask)
     metrics = diffusion.calc_bpd_loop_subsampled(
-        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, t_seq=t_seq
+        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, t_seq=t_seq, latent_mask=lat_mask
     )
     n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
 
@@ -121,13 +122,41 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
         obs_frame_indices = sorted(list(obs_frame_indices))
         inference_schedule[cnt] = obs_frame_indices
         print(f"Step #{cnt}:\n\tLatent: {latent_frame_indices}\n\tObserved: {obs_frame_indices}")
-    with test_util.Protect(schedule_path):
-        # Re-load the test schedule, in case it was modified by another process.
-        saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
-        for k,v in inference_schedule.items():
-            assert k not in saved_schedule, f"Found {k} in the saved schedule!"
-            saved_schedule[k] = v
-        torch.save(inference_schedule, schedule_path)
+        with test_util.Protect(schedule_path):
+            # Re-load the test schedule, in case it was modified by another process.
+            saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
+            for k,v in inference_schedule.items():
+                assert k not in saved_schedule, f"Found {k} in the saved schedule!"
+                saved_schedule[k] = v
+            torch.save(saved_schedule, schedule_path)
+            inference_schedule = {}
+
+
+def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
+    if len(remaining_steps) == 0:
+        print("Nothing left to do!")
+        return
+    SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
+    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
+    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
+    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg}"
+    job_name = "viddiff-opt-sched"
+
+    submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
+    # Exctract script arguments, drop out --submit
+    script_args = " ".join([arg for arg in sys.argv if arg != "--submit"])
+    # Construct the full job submission command
+    cmd = " ".join([SUBMISSION_CMD, submission_args, "--", "python", script_args])
+    print("--> Submitting a job with the following command:\n> ", cmd)
+    print("#######################################################\n")
+    key_in = None
+    while key_in not in ["y", "n", ""]:
+        key_in = input("Proceed? (y/N)").lower()
+        print(key_in)
+    if key_in == "":
+        key_in = "n"
+    if key_in == "y":
+        subprocess.call(cmd, shell=True)
 
 
 if __name__ == "__main__":
@@ -151,6 +180,9 @@ if __name__ == "__main__":
     parser.add_argument("--subset_size", type=int, default=8,
                         help="If not None, only use a subset of the dataset. Default is 50.")
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
+    # Job submission arguments
+    parser.add_argument("--submit", action="store_true", help="If given, figures out which steps of the optimal schedule are remaining to be optimized, then submits an array job doing them.")
+    parser.add_argument("--max_slurm_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
     args = parser.parse_args()
 
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -180,17 +212,6 @@ if __name__ == "__main__":
     if args.max_frames is None:
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
-    # Load the test set
-    dataset = get_train_dataset(dataset_name=model_args.dataset)
-    print(f"Dataset size = {len(dataset)}")
-    # Prepare the indices
-    if args.subset_size is not None:
-        indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
-        print(f"Only generating predictions a randomly chosen subset of size {args.subset_size} videos of the dataset.")
-        dataset = torch.utils.data.Subset(dataset, indices)
-    print(f"Dataset size (after subsampling) = {len(dataset)}")
-    # Prepare the dataloader
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
 
     # Prepare the diffusion sampling arguments (DDIM/respacing)
     postfix = ""
@@ -211,6 +232,28 @@ if __name__ == "__main__":
     args.out_dir.mkdir(parents=True, exist_ok=True)
     schedule_path = args.out_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
+
+    if args.submit:
+        # Figure out which steps are remaining
+        saved_schedule = {} if not schedule_path.exists() else torch.load(schedule_path)
+        frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
+            video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size)
+        num_steps = len(list(frame_indices_iterator))
+        remaining_steps = [step for step in range(num_steps) if step not in saved_schedule]
+        submit(remaining_steps, time="3:00:00", max_slurm_array=args.max_slurm_array)
+        quit()
+
+    # Load the test set
+    dataset = get_train_dataset(dataset_name=model_args.dataset)
+    print(f"Dataset size = {len(dataset)}")
+    # Prepare the indices
+    if args.subset_size is not None:
+        indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
+        print(f"Only generating predictions a randomly chosen subset of size {args.subset_size} videos of the dataset.")
+        dataset = torch.utils.data.Subset(dataset, indices)
+    print(f"Dataset size (after subsampling) = {len(dataset)}")
+    # Prepare the dataloader
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
 
     # Generate the samples
     main(args, model, diffusion, dataloader, schedule_path=schedule_path)

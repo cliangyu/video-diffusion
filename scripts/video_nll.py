@@ -36,7 +36,7 @@ def get_eval_frame_indices(args, test_set_size):
     - distribution from inference_utils
     - loading from directory
     """
-    if args.inference_mode in mask_distributions:
+    if args.inference_mode not in inference_strategies.keys():
         obs_indices, lat_indices = torch.load(args.indices_path)
         print('loaded inference frame indices')
     else:
@@ -82,7 +82,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, f
             lat_indices = [b[i] for b in batch_lat_indices]
             returns.append(run_bpd_evaluation(model=model, diffusion=diffusion, batch=batch,
                                               clip_denoised=args.clip_denoised,
-                                              obs_indices=obs_indices, lat_indices=lat_indices))  # TODO normalise for just latent frames?
+                                              obs_indices=obs_indices, lat_indices=lat_indices))
         returns = {k: np.stack([r[k] for r in returns], axis=1) for k in returns[0].keys()}
         for j in range(len(returns['total_bpd'])):
             fname = fnames[j]
@@ -112,11 +112,10 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
     metrics = diffusion.calc_bpd_loop(
         model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, latent_mask=lat_mask
     )
-    n_latents_batch = lat_mask.flatten(start_dim=1).sum(dim=1) # Number of latent frames in each video. Shape: (B,)
 
     metrics = {k: v.sum(dim=1) if v.ndim > 1 else v for k, v in metrics.items()}
     # sum (rather than mean) over frame dimension by multiplying by number of frames
-    metrics = {k: v*n_latents_batch for (k, v) in metrics.items()}
+    metrics = {k: v*args.max_frames for (k, v) in metrics.items()}
     metrics = {k: v.detach().cpu().numpy() for k, v in metrics.items()}
     return metrics
 
@@ -126,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--out_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
-    parser.add_argument("--inference_mode", required=True, choices=list(inference_strategies.keys())+mask_distributions)
+    parser.add_argument("--inference_mode", required=True)
     parser.add_argument("--indices_path", type=str, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments

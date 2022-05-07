@@ -244,22 +244,8 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    # Prepare the diffusion sampling arguments (DDIM/respacing)
-    postfix = ""
-    if args.use_ddim:
-        postfix += "_ddim"
-    if args.timestep_respacing != "":
-        postfix += "_" + f"respace{args.timestep_respacing}"
-
-    # Create the output directory (if does not exist)
-    if args.out_dir is None:
-        name = f"{Path(args.checkpoint_path).stem}_{model_step}"
-        if postfix != "":
-            name += postfix
-        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
-    else:
-        args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    args.out_dir = test_util.get_model_results_path(args, model_step) / test_util.get_eval_run_identifier(args)
+    args.out_dir = args.out_dir / "samples"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
 
