@@ -224,7 +224,6 @@ if __name__ == "__main__":
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
     model_args = data["config"]
-    model_step = data["step"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
     # Update model parameters, if needed, to enable backward compatibility
@@ -266,7 +265,7 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    args.out_dir = test_util.get_model_results_path(args, model_step) / test_util.get_eval_run_identifier(args)
+    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
     args.out_dir = args.out_dir / "samples"
     args.out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.out_dir}")
