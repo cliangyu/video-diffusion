@@ -177,7 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--timestep_respacing", type=str, default="")
     parser.add_argument("--T", type=int, default=None,
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
-    parser.add_argument("--subset_size", type=int, default=8,
+    parser.add_argument("--subset_size", type=int, default=10,
                         help="If not None, only use a subset of the dataset. Default is 50.")
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
     # Job submission arguments
