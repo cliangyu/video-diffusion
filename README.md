@@ -23,24 +23,24 @@ Results have the following directory structure:
 results
 ├── .../<wandb_id>
 │   ├── <checkpoint_name>
-│   │   ├── model_config.json       (includes the training arguments of the checkpoint)
 │   │   ├── <inference_mode_str>
-│   │   │  ├── videos
-│   │   │  │  ├── <name-1>.gif
-│   │   │  │  ├── <name-2>.gif
-│   │   │  │  ├── ...
-│   │   │  │  └── <name-n>.gif
-│   │   │  ├── samples
-│   │   │  │  ├── <name-1>.npy
-│   │   │  │  ├── <name-2>.npy
-│   │   │  │  ├── ...
-│   │   │  │  └── <name-n>.npy
-│   │   │  ├── elbos
-│   │   │  │  ├── <name-1>.npy
-│   │   │  │  ├── <name-2>.npy
-│   │   │  │  ├── ...
-│   │   │  │  └── <name-n>.npy
-│   │   │  └── <metrics_name>.pkl
+│   │   │   ├── model_config.json       (includes the training arguments of the checkpoint)
+│   │   │   ├── videos
+│   │   │   │  ├── <name-1>.gif
+│   │   │   │  ├── <name-2>.gif
+│   │   │   │  ├── ...
+│   │   │   │  └── <name-n>.gif
+│   │   │   ├── samples
+│   │   │   │  ├── <name-1>.npy
+│   │   │   │  ├── <name-2>.npy
+│   │   │   │  ├── ...
+│   │   │   │  └── <name-n>.npy
+│   │   │   ├── elbos
+│   │   │   │  ├── <name-1>.npy
+│   │   │   │  ├── <name-2>.npy
+│   │   │   │  ├── ...
+│   │   │   │  └── <name-n>.npy
+│   │   │   └── <metrics_name>.pkl
 │   │   └── ... (other inference modes)
 │   └── ... (other checkpoints of the same run)
 └── ... (other wnadb runs)
