@@ -48,6 +48,7 @@ if __name__ == "__main__":
     parser.add_argument("--samples_dir", type=str, required=True)
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--add_gt", action="store_true")
+    parser.add_argument("--do_n", type=int, default=10)
     parser.add_argument("--obs_length", type=int, default=0,
                         help="Number of observed images. If positive, marks the first obs_length frames in output gifs by a red border.")
     args = parser.parse_args()
@@ -61,11 +62,11 @@ if __name__ == "__main__":
     else:
         out_dir = "videos"
 
-    out_dir = Path(args.samples_dir) / out_dir
+    out_dir = Path(args.samples_dir).parent / out_dir
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
 
-    for filename in Path(args.samples_dir).glob("sample_*.npy"):
+    for filename in sorted(Path(args.samples_dir).glob("sample_*.npy"))[:args.do_n]:
         video_name = filename.stem
         data_idx = int(video_name.split("_")[1].split("-")[0])
         gif_path = out_dir / f"{video_name}.gif"

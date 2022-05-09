@@ -8,6 +8,7 @@ import os
 from tqdm.auto import tqdm
 from pathlib import Path
 import json
+from PIL import Image
 
 from improved_diffusion.script_util import (
     video_model_and_diffusion_defaults,
@@ -15,7 +16,7 @@ from improved_diffusion.script_util import (
     args_to_dict,
 )
 from improved_diffusion import dist_util
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
 from improved_diffusion.script_util import str2bool
 from improved_diffusion import inference_util
 from improved_diffusion import test_util
@@ -58,18 +59,34 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
-    frame_indices_iterator = inference_util.inference_strategies[mode](
+    adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
+    frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
         max_frames=max_frames, step_size=step_size,
-        optimal_schedule_path=optimal_schedule_path)
+        optimal_schedule_path=optimal_schedule_path,
+        **adaptive_kwargs
+    ))
 
-    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
+    while True:
+        if 'adaptive' in mode:
+            frame_indices_iterator.set_videos(samples.to(batch.device))
+        try:
+            obs_frame_indices, latent_frame_indices = next(frame_indices_iterator)
+        except StopIteration:
+            break
         print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
         # Prepare network's input
-        x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
-        frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
+        if 'adaptive' in mode:
+            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=1)
+            x0 = torch.stack([samples[i, fi] for i, fi in enumerate(frame_indices)], dim=0).clone()
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices[0]))
+            n_latent = len(latent_frame_indices[0])
+        else:
+            x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
+            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
+            n_latent = len(latent_frame_indices)
         # Prepare masks
-        obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
         print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
         print(f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}")
         print(f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}")
@@ -87,19 +104,24 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
             latent_mask=latent_mask,
             return_attn_weights=False)
         # Fill in the generated frames
-        samples[:, latent_frame_indices] = local_samples[:, -len(latent_frame_indices):].cpu()
+        if 'adaptive' in mode:
+            n_obs = len(obs_frame_indices[0])
+            for i, li in enumerate(latent_frame_indices):
+                samples[i, li] = local_samples[i, n_obs:].cpu()
+        else:
+            samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
     return samples.numpy()
 
 
 def main(args, model, diffusion, dataloader, dataset_indices=None):
-    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
-            output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
+            output_filenames = [args.eval_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
@@ -122,41 +144,65 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    vis = []
-    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
+    if 'adaptive' in args.inference_mode:
+        dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
+        dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=dataset_name, T=args.T)
+        batch = next(iter(DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)))[0]
+        adaptive_kwargs = dict(distance='lpips')
+    else:
+        adaptive_kwargs = {}
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
         video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
-        optimal_schedule_path=optimal_schedule_path
+        optimal_schedule_path=optimal_schedule_path,
+        **adaptive_kwargs
     )
-    exist_indices = list(range(args.obs_length))
-    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
-        print(obs_frame_indices, latent_frame_indices)
-        exist_indices.extend(latent_frame_indices)
-        new_layer = torch.zeros((args.T, 3)).int()
-        new_layer[exist_indices, 0] = 50
-        new_layer[obs_frame_indices, 0] = 255
-        new_layer[latent_frame_indices, 2] = 255
-        vis.append(new_layer)
-        vis.append(new_layer*0)
-    from improved_diffusion.train_util import concat_images_with_padding
-    from PIL import Image
-    vis = torch.stack(vis)
-    path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
+
+    def visualise_obs_lat_sequence(sequence, index, path):
+        """ if index is None, expects sequence to be a list of tuples of form (list, list)
+            if index is given, expects sequence to be a list of tuples of form (list of lists (from which index i is taken), list of lists (from which index i is taken))
+        """
+        vis = []
+        exist_indices = list(range(args.obs_length))
+        for obs_frame_indices, latent_frame_indices in sequence:
+            if index is not None:
+                obs_frame_indices, latent_frame_indices = obs_frame_indices[index], latent_frame_indices[index]
+            exist_indices.extend(latent_frame_indices)
+            new_layer = torch.zeros((args.T, 3)).int()
+            new_layer[exist_indices, 0] = 50
+            new_layer[obs_frame_indices, 0] = 255
+            new_layer[latent_frame_indices, 2] = 255
+            vis.append(new_layer)
+            vis.append(new_layer*0)
+        vis = torch.stack(vis)
+        if index is not None:
+            path = f"{path}_index-{index}"
+        path = f"{path}.png"
+        Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
+        print(f"Saved to {path}")
+
+    frame_indices_iterator.set_videos(batch)
+    indices = list(frame_indices_iterator)
+    path = f"visualisations/sample_vis_{args.inference_mode}"
     if args.optimal:
         path += "_optimal"
-    path = f"{path}.png"
-    Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
-    print(f"Saved to {path}")
+    path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
+    if 'adaptive' in args.inference_mode:
+        for i in range(len(batch)):
+            visualise_obs_lat_sequence(indices, i, path)
+    else:
+        visualise_obs_lat_sequence(indices, None, path)
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
+    parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     # Inference arguments
+    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
     parser.add_argument("--obs_length", type=int, default=36,
@@ -180,14 +226,12 @@ if __name__ == "__main__":
     if args.just_visualise and not args.optimal:
         visualise(args)
         exit()
-
     drange = [-1, 1] # Range of the generated samples' pixel values
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
     model_args = data["config"]
-    model_step = data["step"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
     # Update model parameters, if needed, to enable backward compatibility
@@ -208,8 +252,8 @@ if __name__ == "__main__":
     if args.max_frames is None:
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
-    # Load the test set
-    dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
+    # Load the dataset
+    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset, T=args.T)
     print(f"Dataset size = {len(dataset)}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
@@ -229,31 +273,17 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    # Prepare the diffusion sampling arguments (DDIM/respacing)
-    postfix = ""
-    if args.use_ddim:
-        postfix += "_ddim"
-    if args.timestep_respacing != "":
-        postfix += "_" + f"respace{args.timestep_respacing}"
-
-    # Create the output directory (if does not exist)
-    if args.out_dir is None:
-        name = f"{Path(args.checkpoint_path).stem}_{model_step}"
-        if postfix != "":
-            name += postfix
-        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
-    else:
-        args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Saving samples to {args.out_dir}")
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    args.eval_dir = args.eval_dir
+    (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.eval_dir / 'samples'}")
 
     if args.just_visualise:
         visualise(args)
         exit()
 
     # Store model configs in a JSON file
-    json_path = args.out_dir / "model_config.json"
+    json_path = args.eval_dir / "model_config.json"
     if not json_path.exists():
         with test_util.Protect(json_path): # avoids race conditions
             with open(json_path, "w") as f:

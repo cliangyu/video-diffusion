@@ -1,6 +1,23 @@
 import numpy as np
 import torch
 import time
+import lpips as lpips_metric
+
+
+class LpipsEmbedder(lpips_metric.LPIPS):
+    def scale_by_proj_weights(self, proj, x):
+        conv = proj.model[-1]
+        proj_weights = conv.weight
+        return (proj_weights**0.5) * x
+
+    def forward(self, x):
+        outs = self.net.forward(self.scaling_layer(x))
+        feats = {}
+        for kk in range(self.L):
+            feats[kk] = lpips_metric.normalize_tensor(outs[kk])
+        # res = [lpips_metric.spatial_average(self.lins[kk](feats[kk]), keepdim=True) for kk in range(self.L)]
+        res = [lpips_metric.spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
+        return torch.cat(res, dim=1)
 
 
 class InferenceStrategyBase:
@@ -20,6 +37,12 @@ class InferenceStrategyBase:
                 The optimal schedule file is a .pt file containing a dictionary from step number to the
                 list of frames that should be observed in that step.
         """
+        print_str = f"Inferring using the inference strategy \"{self.typename}\""
+        if optimal_schedule_path is not None:
+            print_str += f", and the optimal schedule stored at {optimal_schedule_path}."
+        else:
+            print_str += "."
+        print(print_str)
         self._video_length = video_length
         self._max_frames = max_frames
         self._done_frames = set(range(num_obs))
@@ -36,7 +59,11 @@ class InferenceStrategyBase:
         obs_frame_indices, latent_frame_indices = self.next_indices()
         # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
         if self.optimal_schedule is not None:
-            obs_frame_indices = self.optimal_schedule[self._current_step]
+            if self._current_step not in self.optimal_schedule:
+                print(f"WARNING: optimal observations for prediction step #{self._current_step} was not found in the saved optimal schedule.")
+                obs_frame_indices = []
+            else:
+                obs_frame_indices = self.optimal_schedule[self._current_step]
         # Type checks. Both observed and latent indices should be lists.
         assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
         # Make sure the observed frames are either osbserved or already generated before
@@ -56,6 +83,78 @@ class InferenceStrategyBase:
 
     def next_indices(self):
         raise NotImplementedError
+
+    @property
+    def typename(self):
+        return type(self).__name__
+
+
+class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
+    def __init__(self, distance, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.distance = distance
+
+    def embed(self, indices):
+        if self.distance == 'l2':
+            embs = [self.videos[:, i] for i in indices]
+        elif self.distance == 'lpips':
+            net = LpipsEmbedder(net='alex', spatial=False).to(self.videos.device)
+            embs = [net(self.videos[:, i]) for i in indices]
+        else:
+            raise NotImplementedError
+        return torch.stack(embs, dim=1)
+
+    def set_videos(self, videos):
+        self.videos = videos
+
+    def select_obs_indices(self, possible_next_indices, n):
+        B = len(self.videos)
+        embs = self.embed(possible_next_indices)
+        batch_selected_indices = []
+        for b in range(B):
+            min_distances_from_selected = [np.inf for _ in possible_next_indices]
+            selected_indices = [possible_next_indices[0]]
+            selected_embs = [embs[b, 0]]  # always begin with next possible index
+            for i in range(1, n):
+                # update min_distances_from_selected
+                for f, dist in enumerate(min_distances_from_selected):
+                    dist_to_newest = ((selected_embs[-1] - embs[b][f])**2).sum().cpu().item()
+                    min_distances_from_selected[f] = min(dist, dist_to_newest)
+                # select one with maximum min_distance_from_selected
+                best_index = np.argmax(min_distances_from_selected)
+                selected_indices.append(possible_next_indices[best_index])
+                selected_embs.append(embs[b, best_index])
+            batch_selected_indices.append(selected_indices)
+        return batch_selected_indices
+
+    def __next__(self):
+        # Check if the video is fully generated.
+        if self.is_done():
+            raise StopIteration
+        # Get the next indices from the function overloaded by each inference strategy.
+        obs_frame_indices, latent_frame_indices = self.next_indices()
+        # Type checks. Both observed and latent indices should be lists.
+        assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
+        # Make sure the observed frames are either osbserved or already generated before
+        for idx in np.array(obs_frame_indices).flatten():
+            assert idx in self._done_frames, f"Attempting to condition on frame {idx} while it is not generated yet.\nGenerated frames: {self._done_frames}\nObserving: {obs_frame_indices}\nGenerating: {latent_frame_indices}"
+        assert np.all(np.array(latent_frame_indices) < self._video_length)
+        self._done_frames.update([idx for idx in latent_frame_indices if idx not in self._done_frames])
+        self._current_step += 1
+        return obs_frame_indices, [latent_frame_indices]*len(obs_frame_indices)
+
+
+class AdaptiveAutoregressive(AdaptiveInferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def next_indices(self):
+        first_idx = max(self._done_frames) + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
+        possible_obs_indices = sorted(self._done_frames)[::-1]
+        n_obs = self._max_frames - self._step_size
+        obs_frame_indices = self.select_obs_indices(possible_obs_indices, n_obs)
+        return obs_frame_indices, latent_frame_indices
 
 
 class Autoregressive(InferenceStrategyBase):
@@ -181,13 +280,17 @@ class HierarchyNLevel(InferenceStrategyBase):
         n_before = n_to_condition_on - len(obs_frame_indices)
         # observe `n_before` frames before...
         if self.current_level == 1:
-            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)+0.999, n_before).astype(np.int32)))  # list(range(max(self._obs_frames), -1, -max(1, int(max(self._obs_frames)/(n_before-1))))))
+            obs_frame_indices.extend(list(np.linspace(0, max(self._obs_frames)+0.999, n_before).astype(np.int32)))
         else:
             obs_frame_indices.extend([i for i in range(min(latent_frame_indices)-1, -1, -1) if i in self._done_frames][:n_before])
 
         self.last_sampled_idx = max(latent_frame_indices)
 
         return obs_frame_indices, latent_frame_indices
+
+    @property
+    def typename(self):
+        return f"{super().typename}-{self.N}"
 
 
 def get_hierarchy_n_level(n):
@@ -205,4 +308,5 @@ inference_strategies = {
     'hierarchy-3': get_hierarchy_n_level(3),
     'hierarchy-4': get_hierarchy_n_level(4),
     'hierarchy-5': get_hierarchy_n_level(5),
+    'adaptive-autoreg': AdaptiveAutoregressive,
 }
