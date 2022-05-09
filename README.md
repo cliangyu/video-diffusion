@@ -23,7 +23,7 @@ Results have the following directory structure:
 results
 ├── .../<wandb_id>
 │   ├── <checkpoint_name>
-│   │   ├── <inference_mode_str>
+│   │   ├── <inference_mode_str>        (we call this directory the "evaluation directory")
 │   │   │   ├── model_config.json       (includes the training arguments of the checkpoint)
 │   │   │   ├── videos
 │   │   │   │  ├── <name-1>.gif
@@ -69,7 +69,7 @@ It has the following arguments:
 - `--T` (optional): Length of the videos. If not specified, it will be inferred from the dataset.
 - `--subset_size` (optional): If given, only uses a (random) subset of the test set with the size specified. Defaults to the whole test set.
 - `--batch_size` (optional): Batch size. Default is 8.
-- `--out_dir` (optional): Output directory for the evaluations. Default is `resutls/<checkpoint_dir_subset>/<checkpoint_name>`. Here, `<checkpoint_dir_subset>` is a subset of the checkpoint path after `.*checkpoints.*/`, and `<checkpoint_name>` is the checkpoint's `.pt` file name, appended with the checkpoint step if it ends with `_latest`.
+- `--out_dir` (optional): Output directory for the evaluations aka "evaluation directory". Default is `resutls/<checkpoint_dir_subset>/<checkpoint_name>`. Here, `<checkpoint_dir_subset>` is a subset of the checkpoint path after `.*checkpoints.*/`, and `<checkpoint_name>` is the checkpoint's `.pt` file name, appended with the checkpoint step if it ends with `_latest`.
 
 Running the script will generate `.npy` files for videos in the test set. Each generated video is saved at `<out_dir>/samples/sample_<video-idx>-<sample-idx>.npy` where `<video-idx>` is the test set index to the video and `<sample-idx>` enumerates the sample generated for that video.
 
