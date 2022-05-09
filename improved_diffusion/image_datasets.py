@@ -107,6 +107,7 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
         data_path = os.path.join(data_path, "train")
         dataset = MineRLDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "mazes_cwvae":
