@@ -40,11 +40,13 @@ def get_eval_frame_indices(args, batch=None):
         obs_indices, lat_indices = torch.load(args.indices_path)
         print('loaded inference frame indices')
     else:
-        adaptive_kwargs = dict(videos=batch, distance='lpips') if args.adaptive else {}
+        adaptive_kwargs = dict(distance='lpips') if args.adaptive else {}
         frame_indices_iterator = inference_strategies[args.inference_mode](
             video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
             **adaptive_kwargs
         )
+        if args.adaptive:
+            frame_indices_iterator.set_videos(batch)
         obs_lat_indices = list(frame_indices_iterator)
         obs_indices = [pair[0] for pair in obs_lat_indices]  # steps by batch_elements
         lat_indices = [pair[1] for pair in obs_lat_indices]  # steps
@@ -75,7 +77,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
-        fnames = [args.out_dir / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
+        fnames = [args.out_dir / "elbos" / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
         if all([os.path.exists(f) for f in fnames]):
             print('Already exist. Skipping', fnames)
             cnt += len(batch)
@@ -155,8 +157,10 @@ if __name__ == "__main__":
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
     parser.add_argument("--clip_denoised", type=str2bool, default=True,
                         help="Clip model predictions of x0 to be in valid range.")
+    parser.add_argument("--optimal", action='store_true', help="Use the optimal schedule for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py.")
     args = parser.parse_args()
     args.adaptive = 'adaptive' in args.inference_mode
+    assert not args.optimal, "Not implemented for ELBO computation."
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
@@ -185,14 +189,10 @@ if __name__ == "__main__":
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
 
-    # Create the output directory (if does not exist)
-    if args.inference_mode in mask_distributions:
-        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.T}"
-    else:
-        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
-    args.out_dir = Path(args.out_dir) / inference_mode_str
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Writing to {args.out_dir}")
+    # set up output directory
+    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    (args.out_dir / "elbos").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.out_dir / 'elbos'}")
 
     # Load the test set
     dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     if args.indices_path is None:
-        args.indices_path = args.out_dir / f"{inference_mode_str}_frame_indices.pt"
+        args.indices_path = args.out_dir / f"frame_indices.pt"
 
     # Prepare the diffusion sampling arguments (DDIM/respacing)
     postfix = ""
