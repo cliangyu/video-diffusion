@@ -109,8 +109,14 @@ class Autoregressive(InferenceStrategyBase):
 
 ## Evaluation
 
-### PSNR/SSIM
+The script `scripts/video_eval.py` and `scripts/video_eval_fvd.py` are used for evaluating the model by different metrics (at the time of writing, PSNR, SSIM, LPIPS and FVD are supported) once samples from the model are generated.
 
-### LPIPS
+Example usage:
 
-### FVD
+```
+python scripts/video_eval.py --eval_dir results/second-batch-400k-iters/3kdr4q5k/ema_0.9999_400000/hierarchy-2_optimal_20_10_300_36/ --num_samples 3
+```
+
+It will create a file at `<eval_dir>/<metrics_name>.pkl` containting a dicrionary from metric names to metric values. At the time of writing, `<metrics_name>` is `metrics_<number_of_test_videos_considered>-<number_of_samples_per_video>-<T>`
+
+For the list and description of all arguments run `python scripts/video_eval.py --help` or `python scripts/video_eval_fvd.py --help`.

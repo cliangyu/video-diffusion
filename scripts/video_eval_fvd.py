@@ -107,15 +107,15 @@ def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--samples_dir", type=str, required=True)
+    parser.add_argument("--eval_dir", type=str, required=True)
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--modes", nargs="+", type=str, default=["fvd"],
                         choices=["fvd", "kvd", "all"])
-    parser.add_argument("--obs_length", type=int, required=True,
-                        help="Number of observed frames.")
+    parser.add_argument("--obs_length", type=int, default=36,
+                        help="Number of observed frames. Default is 36.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--T", type=int, default=None,
-                        help="Video length. If not given, the length of the dataset is used.")
+                        help="Video length. If not given, the same T as used for training will be used.")
     parser.add_argument("--num_samples", type=int, default=None,
                         help="Number of generated samples per test video.")
     parser.add_argument("--batch_size", type=int, default=16,
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     if "all" in args.modes:
         args.modes = ["ssim", "psnr", "lpips"]
     if args.dataset is None:
-        model_config_path = Path(args.samples_dir) / "model_config.json"
+        model_config_path = Path(args.eval_dir) / "model_config.json"
         assert model_config_path.exists(), f"Could not find model config at {model_config_path}"
         with open(model_config_path, "r") as f:
             args.dataset = json.load(f)["dataset"]
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     dataset = get_test_dataset(args.dataset)
     drange = [-1, 1] # Range of dataset's pixel values
     data_fetch = LazyDataFetch(dataset=args.dataset,
-                               samples_dir=args.samples_dir,
+                               eval_dir=args.eval_dir,
                                obs_length=args.obs_length,
                                dataset_drange=drange,
                                num_samples=args.num_samples,
@@ -146,8 +146,8 @@ if __name__ == "__main__":
         assert args.T <= data_fetch.T
 
     # Check if metrics have already been computed
-    name = f"new_metrics_{len(data_fetch)}-{args.num_samples}-{args.T}"
-    pickle_path = Path(args.samples_dir) / f"{name}.pkl"
+    name = f"metrics_{len(data_fetch)}-{args.num_samples}-{args.T}"
+    pickle_path = Path(args.eval_dir) / f"{name}.pkl"
     if pickle_path.exists():
         metrics_pkl = pickle.load(open(pickle_path, "rb"))
         args.modes = [mode for mode in args.modes if mode not in metrics_pkl]
