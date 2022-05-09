@@ -1,5 +1,54 @@
 # Video diffusion
 
+## Directory structures
+
+### Checkpoints
+
+Checkpoints have the following directory structure:
+```bash
+checkpoints
+├── .../<wandb_id>
+│   ├── model_latest.pt
+│   ├── ema_<ema_rate>_latest.pt
+│   ├── opt_latest.pt
+│   ├── model_<step>.pt
+│   ├── ema_<ema_rate>_<step>.pt
+│   └── opt_<step>.pt
+└── ... (other wnadb runs)
+```
+
+### Results
+Results have the following directory structure:
+```bash
+results
+├── .../<wandb_id>
+│   ├── <checkpoint_name>
+│   │   ├── model_config.json       (includes the training arguments of the checkpoint)
+│   │   ├── <inference_mode_str>
+│   │   │  ├── videos
+│   │   │  │  ├── <name-1>.gif
+│   │   │  │  ├── <name-2>.gif
+│   │   │  │  ├── ...
+│   │   │  │  └── <name-n>.gif
+│   │   │  ├── samples
+│   │   │  │  ├── <name-1>.npy
+│   │   │  │  ├── <name-2>.npy
+│   │   │  │  ├── ...
+│   │   │  │  └── <name-n>.npy
+│   │   │  ├── elbos
+│   │   │  │  ├── <name-1>.npy
+│   │   │  │  ├── <name-2>.npy
+│   │   │  │  ├── ...
+│   │   │  │  └── <name-n>.npy
+│   │   │  └── <metrics_name>.pkl
+│   │   └── ... (other inference modes)
+│   └── ... (other checkpoints of the same run)
+└── ... (other wnadb runs)
+```
+In this directory structure,
+- `checkpoint_name` is the name of the checkpoint file, appended with `_<checkpoint_step>` if the checkpoint name ends with `_latest`.
+- `<inference_mode_str>` is a string defining the inference mode, including its various parameters. At the time of writing, it is `<inference_mode>_<max_frames>_<step_size>_<T>_<obs_length>` where `<inference_mode>` is one of the inference strategies, with `_optimal` appended if using the optimal observations.
+
 ## Inference
 
 The script `scripts/video_sample.py` is used to sample a video from the model.
@@ -20,9 +69,9 @@ It has the following arguments:
 - `--T` (optional): Length of the videos. If not specified, it will be inferred from the dataset.
 - `--subset_size` (optional): If given, only uses a (random) subset of the test set with the size specified. Defaults to the whole test set.
 - `--batch_size` (optional): Batch size. Default is 8.
-- `--out_dir` (optional): Output directory for the generated videos. Default is `samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>`.
+- `--out_dir` (optional): Output directory for the evaluations. Default is `resutls/<checkpoint_dir_subset>/<checkpoint_name>`. Here, `<checkpoint_dir_subset>` is a subset of the checkpoint path after `.*checkpoints.*/`, and `<checkpoint_name>` is the checkpoint's `.pt` file name, appended with the checkpoint step if it ends with `_latest`.
 
-Running the script will generate `.npy` files for videos in the test set. Each generated video is saved at `<out_dir>/sample_<video-idx>-<sample-idx>.npy` where `<video-idx>` is the test set index to the video and `<sample-idx>` enumerates the sample generated for that video.
+Running the script will generate `.npy` files for videos in the test set. Each generated video is saved at `<out_dir>/samples/sample_<video-idx>-<sample-idx>.npy` where `<video-idx>` is the test set index to the video and `<sample-idx>` enumerates the sample generated for that video.
 
 ### Advanced usage
 There are a few more arguments that can be used to further tune the sampling process.
