@@ -37,6 +37,12 @@ class InferenceStrategyBase:
                 The optimal schedule file is a .pt file containing a dictionary from step number to the
                 list of frames that should be observed in that step.
         """
+        print_str = f"Inferring using the inference strategy \"{self.typename}\""
+        if optimal_schedule_path is not None:
+            print_str += f", and the optimal schedule stored at {optimal_schedule_path}."
+        else:
+            print_str += "."
+        print(print_str)
         self._video_length = video_length
         self._max_frames = max_frames
         self._done_frames = set(range(num_obs))
@@ -53,7 +59,11 @@ class InferenceStrategyBase:
         obs_frame_indices, latent_frame_indices = self.next_indices()
         # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
         if self.optimal_schedule is not None:
-            obs_frame_indices = self.optimal_schedule[self._current_step]
+            if self._current_step not in self.optimal_schedule:
+                print(f"WARNING: optimal observations for prediction step #{self._current_step} was not found in the saved optimal schedule.")
+                obs_frame_indices = []
+            else:
+                obs_frame_indices = self.optimal_schedule[self._current_step]
         # Type checks. Both observed and latent indices should be lists.
         assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
         # Make sure the observed frames are either osbserved or already generated before
@@ -73,6 +83,10 @@ class InferenceStrategyBase:
 
     def next_indices(self):
         raise NotImplementedError
+
+    @property
+    def typename(self):
+        return type(self).__name__
 
 
 class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
@@ -273,6 +287,10 @@ class HierarchyNLevel(InferenceStrategyBase):
         self.last_sampled_idx = max(latent_frame_indices)
 
         return obs_frame_indices, latent_frame_indices
+
+    @property
+    def typename(self):
+        return f"{super().typename}-{self.N}"
 
 
 def get_hierarchy_n_level(n):

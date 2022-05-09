@@ -121,7 +121,7 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
-            output_filenames = [args.out_dir / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
+            output_filenames = [args.out_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
@@ -183,9 +183,10 @@ def visualise(args):
 
     frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
-    path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
+    path = f"visualisations/sample_vis_{args.inference_mode}"
     if args.optimal:
         path += "_optimal"
+    path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if 'adaptive' in args.inference_mode:
         for i in range(len(batch)):
             visualise_obs_lat_sequence(indices, i, path)
@@ -231,7 +232,6 @@ if __name__ == "__main__":
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
     model_args = data["config"]
-    model_step = data["step"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
     # Update model parameters, if needed, to enable backward compatibility
@@ -273,10 +273,10 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    args.out_dir = test_util.get_model_results_path(args, model_step) / test_util.get_eval_run_identifier(args)
-    args.out_dir = args.out_dir / "samples"
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Saving samples to {args.out_dir}")
+    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    args.out_dir = args.out_dir
+    (args.out_dir / "samples").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.out_dir / 'samples'}")
 
     if args.just_visualise:
         visualise(args)

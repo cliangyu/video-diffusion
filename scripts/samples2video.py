@@ -62,7 +62,7 @@ if __name__ == "__main__":
     else:
         out_dir = "videos"
 
-    out_dir = Path(args.samples_dir) / out_dir
+    out_dir = Path(args.samples_dir).parent / out_dir
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
 

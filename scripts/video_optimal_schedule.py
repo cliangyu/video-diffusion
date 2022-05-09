@@ -177,7 +177,7 @@ if __name__ == "__main__":
     parser.add_argument("--timestep_respacing", type=str, default="")
     parser.add_argument("--T", type=int, default=None,
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
-    parser.add_argument("--subset_size", type=int, default=8,
+    parser.add_argument("--subset_size", type=int, default=10,
                         help="If not None, only use a subset of the dataset. Default is 50.")
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
     # Job submission arguments
@@ -185,13 +185,10 @@ if __name__ == "__main__":
     parser.add_argument("--max_slurm_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
     args = parser.parse_args()
 
-    drange = [-1, 1] # Range of the generated samples' pixel values
-
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
     state_dict = data["state_dict"]
     model_args = data["config"]
-    model_step = data["step"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
     # Update model parameters, if needed, to enable backward compatibility
@@ -213,22 +210,8 @@ if __name__ == "__main__":
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
 
-    # Prepare the diffusion sampling arguments (DDIM/respacing)
-    postfix = ""
-    if args.use_ddim:
-        postfix += "_ddim"
-    if args.timestep_respacing != "":
-        postfix += "_" + f"respace{args.timestep_respacing}"
-
-    # Create the output directory (if does not exist)
-    if args.out_dir is None:
-        name = f"{Path(args.checkpoint_path).stem}_{model_step}"
-        if postfix != "":
-            name += postfix
-        args.out_dir = Path(f"samples/{Path(args.checkpoint_path).parent.name}/{name}")
-    else:
-        args.out_dir = Path(args.out_dir)
-    args.out_dir = args.out_dir / f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    args.optimal = True # Required for get_eval_run_identifier to work correctly.
+    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     schedule_path = args.out_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
