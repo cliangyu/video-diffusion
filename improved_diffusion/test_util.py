@@ -22,7 +22,7 @@ def get_model_results_path(args):
         "results/abcdefg/ema_latest_<checkpoint_step>/". In this path, <checkpoint_step> is the
         training step of the checkpoint and will only be added if the checkpoint path ends with
         "latest", since otherwise the checkpoint name itself ends with the step number.
-        If args.out_dir is not None, this function does nothing and returns the same path.
+        If args.eval_dir is not None, this function does nothing and returns the same path.
         args is expected to have the following attributes:
         - use_ddim
         - timesptep_respacing
@@ -36,7 +36,7 @@ def get_model_results_path(args):
         postfix += "_" + f"respace{args.timestep_respacing}"
 
     # Create the output directory (if does not exist)
-    if args.out_dir is None:
+    if args.eval_dir is None:
         checkpoint_path = Path(args.checkpoint_path)
         name = f"{checkpoint_path.stem}"
         if name.endswith("latest"):
@@ -52,7 +52,7 @@ def get_model_results_path(args):
         assert path is not None
         return Path("results") / path.parent / name
     else:
-        return Path(args.out_dir)
+        return Path(args.eval_dir)
 
 
 def get_eval_run_identifier(args):
