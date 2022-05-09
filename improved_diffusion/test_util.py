@@ -69,4 +69,6 @@ def get_eval_run_identifier(args):
     if args.optimal:
         res += "_optimal"
     res += f"_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
+    if hasattr(args, "dataset_partition") and args.dataset_partition == "train":
+        res = "trainset_" + res
     return res

@@ -16,7 +16,7 @@ from improved_diffusion.script_util import (
     args_to_dict,
 )
 from improved_diffusion import dist_util
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
 from improved_diffusion.script_util import str2bool
 from improved_diffusion import inference_util
 from improved_diffusion import test_util
@@ -114,14 +114,14 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
 
 
 def main(args, model, diffusion, dataloader, dataset_indices=None):
-    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
     cnt = 0
     for batch, _ in tqdm(dataloader, leave=True):
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
-            output_filenames = [args.out_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
+            output_filenames = [args.eval_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
@@ -144,10 +144,10 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    optimal_schedule_path = None if not args.optimal else args.out_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
     if 'adaptive' in args.inference_mode:
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
-        dataset = get_test_dataset(dataset_name=dataset_name, T=args.T)
+        dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=dataset_name, T=args.T)
         batch = next(iter(DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)))[0]
         adaptive_kwargs = dict(distance='lpips')
     else:
@@ -198,10 +198,11 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
+    parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     # Inference arguments
+    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
     parser.add_argument("--obs_length", type=int, default=36,
@@ -225,7 +226,6 @@ if __name__ == "__main__":
     if args.just_visualise and not args.optimal:
         visualise(args)
         exit()
-
     drange = [-1, 1] # Range of the generated samples' pixel values
 
     # Load the checkpoint (state dictionary and config)
@@ -252,8 +252,8 @@ if __name__ == "__main__":
     if args.max_frames is None:
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
-    # Load the test set
-    dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
+    # Load the dataset
+    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset, T=args.T)
     print(f"Dataset size = {len(dataset)}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
@@ -273,17 +273,17 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
-    args.out_dir = args.out_dir
-    (args.out_dir / "samples").mkdir(parents=True, exist_ok=True)
-    print(f"Saving samples to {args.out_dir / 'samples'}")
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    args.eval_dir = args.eval_dir
+    (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.eval_dir / 'samples'}")
 
     if args.just_visualise:
         visualise(args)
         exit()
 
     # Store model configs in a JSON file
-    json_path = args.out_dir / "model_config.json"
+    json_path = args.eval_dir / "model_config.json"
     if not json_path.exists():
         with test_util.Protect(json_path): # avoids race conditions
             with open(json_path, "w") as f:
