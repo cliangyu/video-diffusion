@@ -4,6 +4,22 @@ import time
 import lpips as lpips_metric
 
 
+class LpipsEmbedder(lpips_metric.LPIPS):
+    def scale_by_proj_weights(self, proj, x):
+        conv = proj.model[-1]
+        proj_weights = conv.weight
+        return (proj_weights**0.5) * x
+
+    def forward(self, x):
+        outs = self.net.forward(self.scaling_layer(x))
+        feats = {}
+        for kk in range(self.L):
+            feats[kk] = lpips_metric.normalize_tensor(outs[kk])
+        # res = [lpips_metric.spatial_average(self.lins[kk](feats[kk]), keepdim=True) for kk in range(self.L)]
+        res = [lpips_metric.spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
+        return torch.cat(res, dim=1)
+
+
 class InferenceStrategyBase:
     """ Inference strategies """
     def __init__(self, video_length: int, num_obs: int, max_frames: int, step_size: int, optimal_schedule_path=None):
@@ -60,41 +76,42 @@ class InferenceStrategyBase:
 
 
 class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
-    def __init__(self, videos, distance, *args, **kwargs):
-        self.videos = videos
-        if distance == 'mse':
-            self.distance_func = lambda a, b: ((a - b)**2)
-        elif distance == 'lpips':
-            net = lpips_metric.LPIPS(net='alex', spatial=False).to(videos.device)
-            self.distance_func = lambda a, b: net(a, b).flatten(start_dim=1).mean(dim=1).detach().cpu().numpy()
+    def __init__(self, distance, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.distance = distance
+
+    def embed(self, indices):
+        if self.distance == 'l2':
+            embs = [self.videos[:, i] for i in indices]
+        elif self.distance == 'lpips':
+            net = LpipsEmbedder(net='alex', spatial=False).to(self.videos.device)
+            embs = [net(self.videos[:, i]) for i in indices]
         else:
             raise NotImplementedError
-        super().__init__(*args, **kwargs)
+        return torch.stack(embs, dim=1)
+
+    def set_videos(self, videos):
+        self.videos = videos
 
     def select_obs_indices(self, possible_next_indices, n):
-        batch_size = len(self.videos)
-        distances_from_start = []
-        for i in range(1, len(possible_next_indices)):
-            i1 = possible_next_indices[0]
-            i2 = possible_next_indices[i]
-            distances_from_start.append(self.distance_func(self.videos[:, i1], self.videos[:, i2]))
-        distances_from_start = [np.zeros_like(distances_from_start[0])] + distances_from_start  # representing zero distance for first frame
-        distances_from_start = np.stack(distances_from_start, axis=1)
-        relative_distances = distances_from_start / distances_from_start.max(axis=1, keepdims=True)
-        observe_when_distance_exceeds = np.linspace(0, 1, n)
-        batch_indices = []
-        for j in range(batch_size):
-            indices = []
-            for threshold in observe_when_distance_exceeds[::-1]:
-                try:
-                    first_index_exceeding_threshold = next(i for i in possible_next_indices if relative_distances[j, i] >= threshold and i not in indices)
-                except StopIteration:
-                    print('WARNING: couldn\'t find suitable index in adaptive index selection')
-                    first_index_exceeding_threshold = next(i for i in possible_next_indices if i not in indices)
-                indices.append(first_index_exceeding_threshold)
-            batch_indices.append(indices)
-        assert len(indices) == n
-        return batch_indices
+        B = len(self.videos)
+        embs = self.embed(possible_next_indices)
+        batch_selected_indices = []
+        for b in range(B):
+            min_distances_from_selected = [np.inf for _ in possible_next_indices]
+            selected_indices = [possible_next_indices[0]]
+            selected_embs = [embs[b, 0]]  # always begin with next possible index
+            for i in range(1, n):
+                # update min_distances_from_selected
+                for f, dist in enumerate(min_distances_from_selected):
+                    dist_to_newest = ((selected_embs[-1] - embs[b][f])**2).sum().cpu().item()
+                    min_distances_from_selected[f] = min(dist, dist_to_newest)
+                # select one with maximum min_distance_from_selected
+                best_index = np.argmax(min_distances_from_selected)
+                selected_indices.append(possible_next_indices[best_index])
+                selected_embs.append(embs[b, best_index])
+            batch_selected_indices.append(selected_indices)
+        return batch_selected_indices
 
     def __next__(self):
         # Check if the video is fully generated.

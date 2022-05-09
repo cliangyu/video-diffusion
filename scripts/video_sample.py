@@ -59,15 +59,21 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
-    adaptive_kwargs = dict(videos=batch, distance='lpips') if 'adaptive' in mode else {}
-    frame_indices_iterator = inference_util.inference_strategies[mode](
+    adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
+    frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
         max_frames=max_frames, step_size=step_size,
         optimal_schedule_path=optimal_schedule_path,
         **adaptive_kwargs
-    )
+    ))
 
-    for obs_frame_indices, latent_frame_indices in tqdm(frame_indices_iterator):
+    while True:
+        if 'adaptive' in mode:
+            frame_indices_iterator.set_videos(samples.to(batch.device))
+        try:
+            obs_frame_indices, latent_frame_indices = next(frame_indices_iterator)
+        except StopIteration:
+            break
         print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
         # Prepare network's input
         if 'adaptive' in mode:
@@ -143,7 +149,7 @@ def visualise(args):
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
         dataset = get_test_dataset(dataset_name=dataset_name, T=args.T)
         batch = next(iter(DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)))[0]
-        adaptive_kwargs = dict(videos=batch, distance='lpips')
+        adaptive_kwargs = dict(distance='lpips')
     else:
         adaptive_kwargs = {}
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
@@ -175,6 +181,7 @@ def visualise(args):
         Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
         print(f"Saved to {path}")
 
+    frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if args.optimal:
