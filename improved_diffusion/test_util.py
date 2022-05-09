@@ -47,7 +47,7 @@ def get_model_results_path(args):
         path = None
         for idx, x in enumerate(checkpoint_path.parts):
             if "checkpoint" in x:
-                path = Path(*(checkpoint_path.parts[idx+1:-1]))
+                path = Path(*(checkpoint_path.parts[idx+1:]))
                 break
         assert path is not None
         return Path("results") / path.parent / name
