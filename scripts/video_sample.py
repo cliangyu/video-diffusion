@@ -253,7 +253,7 @@ if __name__ == "__main__":
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
     # Load the dataset
-    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset, T=args.T)
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset, T=args.T)
     print(f"Dataset size = {len(dataset)}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
