@@ -216,6 +216,7 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--eval_dir", type=str, required=True)
     parser.add_argument("--dataset", type=str, default=None)
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
     parser.add_argument("--modes", nargs="+", type=str, default=["all"],
                         choices=["ssim", "psnr", "lpips", "fvd", "all"])
     parser.add_argument("--obs_length", type=int, default=36,
@@ -241,7 +242,7 @@ if __name__ == "__main__":
             if args.T is None:
                 args.T = model_config["T"]
     # Load dataset
-    dataset = get_test_dataset(args.dataset)
+    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values
     data_fetch = LazyDataFetch(
         dataset=args.dataset,

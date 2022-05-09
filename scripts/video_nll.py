@@ -22,7 +22,7 @@ from improved_diffusion.script_util import (
     str2bool,
 )
 from improved_diffusion.inference_util import inference_strategies
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
 from improved_diffusion import test_util
 
 from video_sample import get_masks, default_model_configs
@@ -77,7 +77,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
-        fnames = [args.out_dir / "elbos" / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
+        fnames = [args.eval_dir / "elbos" / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
         if all([os.path.exists(f) for f in fnames]):
             print('Already exist. Skipping', fnames)
             cnt += len(batch)
@@ -138,11 +138,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--out_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
-    parser.add_argument("--inference_mode", required=True)
+    parser.add_argument("--eval_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
     parser.add_argument("--indices_path", type=str, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
+    parser.add_argument("--inference_mode", required=True)
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
     parser.add_argument("--obs_length", type=int, default=36,
@@ -190,12 +191,12 @@ if __name__ == "__main__":
     print(f"max_frames = {args.max_frames}")
 
     # set up output directory
-    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
-    (args.out_dir / "elbos").mkdir(parents=True, exist_ok=True)
-    print(f"Saving samples to {args.out_dir / 'elbos'}")
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    (args.eval_dir / "elbos").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.eval_dir / 'elbos'}")
 
     # Load the test set
-    dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
+    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset, T=args.T)
     args.test_set_size = len(dataset)
     print(f"Dataset size = {args.test_set_size}")
     # Prepare the indices
@@ -213,7 +214,7 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     if args.indices_path is None:
-        args.indices_path = args.out_dir / f"frame_indices.pt"
+        args.indices_path = args.eval_dir / f"frame_indices.pt"
 
     # Prepare the diffusion sampling arguments (DDIM/respacing)
     postfix = ""
@@ -223,7 +224,7 @@ if __name__ == "__main__":
         postfix += "_" + f"respace{args.timestep_respacing}"
 
     # Store model configs in a JSON file
-    json_path = args.out_dir / "model_config.json"
+    json_path = args.eval_dir / "model_config.json"
     if not json_path.exists():
         with test_util.Protect(json_path): # avoids race conditions
             with open(json_path, "w") as f:

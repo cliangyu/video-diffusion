@@ -29,6 +29,33 @@ default_model_configs = {"enforce_position_invariance": False,
                          "cond_emb_type": "channel"}
 
 
+def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
+    if len(remaining_steps) == 0:
+        print("Nothing left to do!")
+        return
+    SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
+    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
+    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
+    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg}"
+    job_name = "viddiff-opt-sched"
+
+    submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
+    # Exctract script arguments, drop out --submit
+    script_args = " ".join([arg for arg in sys.argv if arg != "--submit"])
+    # Construct the full job submission command
+    cmd = " ".join([SUBMISSION_CMD, submission_args, "--", "python", script_args])
+    print("--> Submitting a job with the following command:\n> ", cmd)
+    print("#######################################################\n")
+    key_in = None
+    while key_in not in ["y", "n", ""]:
+        key_in = input("Proceed? (y/N)").lower()
+        print(key_in)
+    if key_in == "":
+        key_in = "n"
+    if key_in == "y":
+        subprocess.call(cmd, shell=True)
+
+
 def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_indices, t_seq=None):
     x0 = torch.zeros_like(batch[:, :len(obs_indices[0]) + len(lat_indices[0])])
     obs_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
@@ -132,41 +159,14 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
             inference_schedule = {}
 
 
-def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
-    if len(remaining_steps) == 0:
-        print("Nothing left to do!")
-        return
-    SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
-    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
-    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
-    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg}"
-    job_name = "viddiff-opt-sched"
-
-    submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
-    # Exctract script arguments, drop out --submit
-    script_args = " ".join([arg for arg in sys.argv if arg != "--submit"])
-    # Construct the full job submission command
-    cmd = " ".join([SUBMISSION_CMD, submission_args, "--", "python", script_args])
-    print("--> Submitting a job with the following command:\n> ", cmd)
-    print("#######################################################\n")
-    key_in = None
-    while key_in not in ["y", "n", ""]:
-        key_in = input("Proceed? (y/N)").lower()
-        print(key_in)
-    if key_in == "":
-        key_in = "n"
-    if key_in == "y":
-        subprocess.call(cmd, shell=True)
-
-
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--out_dir", default=None, help="Output directory for the generated videos. If None, defaults to a directory at samples/<checkpoint_dir_name>/<checkpoint_name>_<checkpoint_step>.")
+    parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     # Inference arguments
+    parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
     parser.add_argument("--obs_length", type=int, default=36,
@@ -211,9 +211,9 @@ if __name__ == "__main__":
     print(f"max_frames = {args.max_frames}")
 
     args.optimal = True # Required for get_eval_run_identifier to work correctly.
-    args.out_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    schedule_path = args.out_dir / "optimal_schedule.pt"
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    args.eval_dir.mkdir(parents=True, exist_ok=True)
+    schedule_path = args.eval_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
 
     if args.submit:
