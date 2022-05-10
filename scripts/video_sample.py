@@ -147,7 +147,7 @@ def visualise(args):
     optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
     if 'adaptive' in args.inference_mode:
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
-        dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=dataset_name, T=args.T)
+        dataset = globals()[f"get_{args.dataset_partition}_dataset"](dataset_name=dataset_name, T=args.T)
         batch = next(iter(DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)))[0]
         adaptive_kwargs = dict(distance='lpips')
     else:
@@ -181,7 +181,8 @@ def visualise(args):
         Image.fromarray(vis.numpy().astype(np.uint8)).save(path)
         print(f"Saved to {path}")
 
-    frame_indices_iterator.set_videos(batch)
+    if 'adaptive' in args.inference_mode:
+        frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}"
     if args.optimal:
