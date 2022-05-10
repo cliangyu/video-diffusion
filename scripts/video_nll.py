@@ -22,7 +22,7 @@ from improved_diffusion.script_util import (
     str2bool,
 )
 from improved_diffusion.inference_util import inference_strategies
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
 from improved_diffusion import test_util
 
 from video_sample import get_masks, default_model_configs
@@ -30,7 +30,7 @@ from video_sample import get_masks, default_model_configs
 mask_distributions = ["differently-spaced-groups"]
 
 
-def get_eval_frame_indices(args, test_set_size):
+def get_eval_frame_indices(args, batch=None):
     """
     can get indices by either
     - distribution from inference_utils
@@ -40,16 +40,24 @@ def get_eval_frame_indices(args, test_set_size):
         obs_indices, lat_indices = torch.load(args.indices_path)
         print('loaded inference frame indices')
     else:
+        adaptive_kwargs = dict(distance='lpips') if args.adaptive else {}
         frame_indices_iterator = inference_strategies[args.inference_mode](
-            video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size
+            video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
+            **adaptive_kwargs
         )
+        if args.adaptive:
+            frame_indices_iterator.set_videos(batch)
         obs_lat_indices = list(frame_indices_iterator)
-        obs_indices = [pair[0] for pair in obs_lat_indices]
-        lat_indices = [pair[1] for pair in obs_lat_indices]
-        obs_indices = [obs_indices for _ in range(test_set_size)]
-        lat_indices = [lat_indices for _ in range(test_set_size)]
+        obs_indices = [pair[0] for pair in obs_lat_indices]  # steps by batch_elements
+        lat_indices = [pair[1] for pair in obs_lat_indices]  # steps
+        if args.adaptive:  # want obs_indices, lat_indices to both be batch_elements x steps x index_sequence
+            obs_indices = [[obs_indices[i][j] for i in range(len(obs_indices))] for j in range(len(batch))]
+            lat_indices = [[lat_indices[i][j] for i in range(len(lat_indices))] for j in range(len(batch))]
+        else:
+            obs_indices = [obs_indices for _ in range(args.test_set_size)]
+            lat_indices = [lat_indices for _ in range(args.test_set_size)]
         print('generated inference frame indices')
-        if os.path.exists(args.indices_path):
+        if os.path.exists(args.indices_path) and not args.adaptive:
             print(f'Checking match to indices at {args.indices_path}')
             try:
                 obs_to_check, lat_to_check = torch.load(args.indices_path)
@@ -60,21 +68,27 @@ def get_eval_frame_indices(args, test_set_size):
                 assert i1 == i2
             for i1, i2 in zip(lat_indices, lat_to_check):
                 assert i1 == i2
-        else:
+        elif not args.adaptive:
             torch.save((obs_indices, lat_indices), args.indices_path)
     return obs_indices, lat_indices
 
-def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None, frame_indices=None):
+def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
+
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
-        fnames = [args.out_dir / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
+        fnames = [args.eval_dir / "elbos" / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
         if all([os.path.exists(f) for f in fnames]):
             print('Already exist. Skipping', fnames)
             cnt += len(batch)
             continue
-        batch_obs_indices = frame_indices[0][cnt:cnt+len(batch)]
-        batch_lat_indices = frame_indices[1][cnt:cnt+len(batch)]
+        obs_indices, lat_indices = get_eval_frame_indices(args, batch=batch if args.adaptive else None)
+        if not args.adaptive:
+            #frame_indices = ([obs_indices[i] for i in args.indices], [lat_indices[i] for i in args.indices],)
+            obs_indices = [obs_indices[i] for i in args.indices]
+            lat_indices = [lat_indices[i] for i in args.indices]
+        batch_obs_indices = obs_indices if args.adaptive else obs_indices[cnt:cnt+len(batch)]
+        batch_lat_indices = lat_indices if args.adaptive else lat_indices[cnt:cnt+len(batch)]
         returns = []
         n_index_types = len(batch_obs_indices[0])
         for i in range(n_index_types):
@@ -124,11 +138,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--out_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
-    parser.add_argument("--inference_mode", required=True)
+    parser.add_argument("--eval_dir", help="Ideally set to samples/<checkpoint_id>/. Will store in subdirectory corresponding to inference mode.")
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
     parser.add_argument("--indices_path", type=str, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
+    parser.add_argument("--inference_mode", required=True)
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
     parser.add_argument("--obs_length", type=int, default=36,
@@ -143,7 +158,10 @@ if __name__ == "__main__":
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
     parser.add_argument("--clip_denoised", type=str2bool, default=True,
                         help="Clip model predictions of x0 to be in valid range.")
+    parser.add_argument("--optimal", action='store_true', help="Use the optimal schedule for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py.")
     args = parser.parse_args()
+    args.adaptive = 'adaptive' in args.inference_mode
+    assert not args.optimal, "Not implemented for ELBO computation."
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
@@ -172,19 +190,15 @@ if __name__ == "__main__":
         args.max_frames = model_args.max_frames
     print(f"max_frames = {args.max_frames}")
 
-    # Create the output directory (if does not exist)
-    if args.inference_mode in mask_distributions:
-        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.T}"
-    else:
-        inference_mode_str = f"{args.inference_mode}_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
-    args.out_dir = Path(args.out_dir) / inference_mode_str
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Writing to {args.out_dir}")
+    # set up output directory
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    (args.eval_dir / "elbos").mkdir(parents=True, exist_ok=True)
+    print(f"Saving samples to {args.eval_dir / 'elbos'}")
 
     # Load the test set
-    dataset = get_test_dataset(dataset_name=model_args.dataset, T=args.T)
-    test_set_size = len(dataset)
-    print(f"Dataset size = {test_set_size}")
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset, T=args.T)
+    args.test_set_size = len(dataset)
+    print(f"Dataset size = {args.test_set_size}")
     # Prepare the indices
     if args.indices is None and "SLURM_ARRAY_TASK_ID" in os.environ:
         task_id = int(os.environ["SLURM_ARRAY_TASK_ID"])
@@ -200,10 +214,7 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     if args.indices_path is None:
-        args.indices_path = args.out_dir / f"{inference_mode_str}_frame_indices.pt"
-    obs_indices, lat_indices = get_eval_frame_indices(args, test_set_size)
-    frame_indices = ([obs_indices[i] for i in args.indices],
-                     [lat_indices[i] for i in args.indices],)
+        args.indices_path = args.eval_dir / f"frame_indices.pt"
 
     # Prepare the diffusion sampling arguments (DDIM/respacing)
     postfix = ""
@@ -213,7 +224,7 @@ if __name__ == "__main__":
         postfix += "_" + f"respace{args.timestep_respacing}"
 
     # Store model configs in a JSON file
-    json_path = args.out_dir / "model_config.json"
+    json_path = args.eval_dir / "model_config.json"
     if not json_path.exists():
         with test_util.Protect(json_path): # avoids race conditions
             with open(json_path, "w") as f:
@@ -221,4 +232,4 @@ if __name__ == "__main__":
         print(f"Saved model config at {json_path}")
 
     # Generate the samples
-    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=args.indices, frame_indices=frame_indices)
+    main(args, model, diffusion, dataloader, postfix=postfix, dataset_indices=args.indices)

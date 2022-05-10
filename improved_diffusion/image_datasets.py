@@ -21,7 +21,7 @@ video_data_paths_dict = {
     "mazes":        "datasets/mazes-torch",
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
-    "carla_no_traffic": "datasets/carla-no-traffic",
+    "carla_no_traffic": "datasets/carla/no-traffic",
 }
 
 default_T_dict = {
@@ -107,14 +107,14 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
         data_path = os.path.join(data_path, "train")
         dataset = MineRLDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "carla_no_traffic":
-        data_path = os.path.join(data_path, "train")
-        dataset = CarlaDataset(data_path, shard=shard, num_shards=num_shards, T=T)
+        dataset = CarlaDataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
         dataset = TensorVideoDataset(data_path, shard=shard, num_shards=num_shards)
@@ -141,8 +141,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         data_path = os.path.join(data_path, "test")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "carla_no_traffic":
-        data_path = os.path.join(data_path, "test")
-        dataset = CarlaDataset(data_path, shard=0, num_shards=1, T=T)
+        dataset = CarlaDataset(train=False, path=data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
     dataset.set_test()
@@ -162,8 +161,7 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "carla_no_traffic":
-        data_path = os.path.join(data_path, "train")
-        dataset = CarlaDataset(data_path, shard=0, num_shards=1, T=T)
+        dataset = CarlaDataset(train=True, path=data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
@@ -356,15 +354,21 @@ class MazesDataset(BaseDataset):
 
 
 class CarlaDataset(MazesDataset):
+    def __init__(self, train, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fnames = glob.glob(str(self.path / f"video_*.pt"))
+        self.split_path = self.path / f"video_{'train' if train else 'test'}.csv"
+        self.fnames = [line.rstrip('\n').split('/')[-1] for line in open(self.split_path, 'r').readlines() if '.pt' in line]
+        print(f"Training on {len(self.fnames)} files (Carla dataset).")
+
     def getitem_path(self, idx):
-        return self.path / f"video_{idx}.pt"
+        return self.path / self.fnames[idx]
 
     def postprocess_video(self, video):
         return -1 + 2 * (video.permute(0, 3, 1, 2).float()/255)
 
     def __len__(self):
-        path = self.get_src_path(self.path)
-        return len(glob.glob(os.path.join(path, 'video_*.pt')))
+        return len(self.fnames)
 
 
 class GQNMazesDataset(BaseDataset):

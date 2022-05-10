@@ -4,6 +4,22 @@ import time
 import lpips as lpips_metric
 
 
+class LpipsEmbedder(lpips_metric.LPIPS):
+    def scale_by_proj_weights(self, proj, x):
+        conv = proj.model[-1]
+        proj_weights = conv.weight
+        return (proj_weights**0.5) * x
+
+    def forward(self, x):
+        outs = self.net.forward(self.scaling_layer(x))
+        feats = {}
+        for kk in range(self.L):
+            feats[kk] = lpips_metric.normalize_tensor(outs[kk])
+        # res = [lpips_metric.spatial_average(self.lins[kk](feats[kk]), keepdim=True) for kk in range(self.L)]
+        res = [lpips_metric.spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
+        return torch.cat(res, dim=1)
+
+
 class InferenceStrategyBase:
     """ Inference strategies """
     def __init__(self, video_length: int, num_obs: int, max_frames: int, step_size: int, optimal_schedule_path=None):
@@ -21,6 +37,12 @@ class InferenceStrategyBase:
                 The optimal schedule file is a .pt file containing a dictionary from step number to the
                 list of frames that should be observed in that step.
         """
+        print_str = f"Inferring using the inference strategy \"{self.typename}\""
+        if optimal_schedule_path is not None:
+            print_str += f", and the optimal schedule stored at {optimal_schedule_path}."
+        else:
+            print_str += "."
+        print(print_str)
         self._video_length = video_length
         self._max_frames = max_frames
         self._done_frames = set(range(num_obs))
@@ -37,7 +59,11 @@ class InferenceStrategyBase:
         obs_frame_indices, latent_frame_indices = self.next_indices()
         # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
         if self.optimal_schedule is not None:
-            obs_frame_indices = self.optimal_schedule[self._current_step]
+            if self._current_step not in self.optimal_schedule:
+                print(f"WARNING: optimal observations for prediction step #{self._current_step} was not found in the saved optimal schedule.")
+                obs_frame_indices = []
+            else:
+                obs_frame_indices = self.optimal_schedule[self._current_step]
         # Type checks. Both observed and latent indices should be lists.
         assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
         # Make sure the observed frames are either osbserved or already generated before
@@ -58,43 +84,48 @@ class InferenceStrategyBase:
     def next_indices(self):
         raise NotImplementedError
 
+    @property
+    def typename(self):
+        return type(self).__name__
+
 
 class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
-    def __init__(self, videos, distance, *args, **kwargs):
-        self.videos = videos
-        if distance == 'mse':
-            self.distance_func = lambda a, b: ((a - b)**2)
-        elif distance == 'lpips':
-            net = lpips_metric.LPIPS(net='alex', spatial=False).to(videos.device)
-            self.distance_func = lambda a, b: net(a, b).flatten(start_dim=1).mean(dim=1).cpu().numpy()
+    def __init__(self, distance, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.distance = distance
+
+    def embed(self, indices):
+        if self.distance == 'l2':
+            embs = [self.videos[:, i] for i in indices]
+        elif self.distance == 'lpips':
+            net = LpipsEmbedder(net='alex', spatial=False).to(self.videos.device)
+            embs = [net(self.videos[:, i]) for i in indices]
         else:
             raise NotImplementedError
-        super().__init__(*args, **kwargs)
+        return torch.stack(embs, dim=1)
+
+    def set_videos(self, videos):
+        self.videos = videos
 
     def select_obs_indices(self, possible_next_indices, n):
-        batch_size = len(self.videos)
-        distances_from_start = []
-        for i in range(1, len(possible_next_indices)):
-            i1 = possible_next_indices[0]
-            i2 = possible_next_indices[i]
-            distances_from_start.append(self.distance_func(self.videos[:, i1], self.videos[:, i2]))
-        distances_from_start = [np.zeros_like(distances_from_start[0])] + distances_from_start  # representing zero distance for first frame
-        distances_from_start = np.stack(distances_from_start, axis=1)
-        relative_distances = distances_from_start / distances_from_start.max(axis=1, keepdims=True)
-        observe_when_distance_exceeds = np.linspace(0, 1, n)
-        batch_indices = []
-        for j in range(batch_size):
-            indices = []
-            skipped = 0
-            for threshold in observe_when_distance_exceeds[::-1]:
-                try:
-                    first_index_exceeding_threshold = next(i for i in possible_next_indices if relative_distances[j, i] >= threshold and i not in indices)
-                    indices.append(first_index_exceeding_threshold)
-                except StopIteration:
-                    skipped += 1
-            batch_indices.append(indices)
-        # TODO indices may still not be full
-        return batch_indices
+        B = len(self.videos)
+        embs = self.embed(possible_next_indices)
+        batch_selected_indices = []
+        for b in range(B):
+            min_distances_from_selected = [np.inf for _ in possible_next_indices]
+            selected_indices = [possible_next_indices[0]]
+            selected_embs = [embs[b, 0]]  # always begin with next possible index
+            for i in range(1, n):
+                # update min_distances_from_selected
+                for f, dist in enumerate(min_distances_from_selected):
+                    dist_to_newest = ((selected_embs[-1] - embs[b][f])**2).sum().cpu().item()
+                    min_distances_from_selected[f] = min(dist, dist_to_newest)
+                # select one with maximum min_distance_from_selected
+                best_index = np.argmax(min_distances_from_selected)
+                selected_indices.append(possible_next_indices[best_index])
+                selected_embs.append(embs[b, best_index])
+            batch_selected_indices.append(selected_indices)
+        return batch_selected_indices
 
     def __next__(self):
         # Check if the video is fully generated.
@@ -256,6 +287,10 @@ class HierarchyNLevel(InferenceStrategyBase):
         self.last_sampled_idx = max(latent_frame_indices)
 
         return obs_frame_indices, latent_frame_indices
+
+    @property
+    def typename(self):
+        return f"{super().typename}-{self.N}"
 
 
 def get_hierarchy_n_level(n):

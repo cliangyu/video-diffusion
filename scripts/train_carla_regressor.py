@@ -39,6 +39,7 @@ def my_config():
 
     # Hyper params
     lr   = 0.001
+    batch_size = 4
 
     # Training settings
     num_epochs = 25
@@ -84,14 +85,14 @@ def init(config):
     args.dataloaders = {
         "train": torch.utils.data.DataLoader(
             CARLADataset(args.data_dir / 'train', data_transforms['train']),
-            batch_size=4,
+            batch_size=args.batch_size,
             shuffle=True,
-            num_workers=4),
+            num_workers=2),
         'test': torch.utils.data.DataLoader(
             CARLADataset(args.data_dir / 'test', data_transforms['test']),
-            batch_size=4,
+            batch_size=args.batch_size,
             shuffle=True,
-            num_workers=4)}
+            num_workers=2)}
 
     args.dataset_sizes = {x: len(args.dataloaders[x].dataset) for x in ['train', 'test']}
     args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -209,4 +210,8 @@ def command_line_entry(_run,_config):
                             config = _config,
                               tags = [_run.experiment_info['name']])
     args = init(_config)
-    train(args)
+    model = train(args)
+
+    # "model.pth" is saved in wandb.run.dir & will be uploaded at the end of training
+    torch.save(model.state_dict(), os.path.join(wandb.run.dir, "model.pth"))
+
