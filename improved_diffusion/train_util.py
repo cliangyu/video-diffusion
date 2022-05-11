@@ -143,6 +143,8 @@ class TrainLoop:
         with RNG(0):
             self.valid_batches = [next(self.data)[0][:self.valid_microbatch]
                                   for i in range(self.n_valid_batches)]
+        if dist.get_rank() == 0:
+            wandb.log({"num_parameters": sum(p.numel() for p in model.parameters())})
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = self.resume_checkpoint

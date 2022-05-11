@@ -76,7 +76,6 @@ def main():
     )
     model.to(dist_util.dev())
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
-    wandb.log({"num_parameters": sum(p.numel() for p in model.parameters())})
 
     logger.log("creating data loader...")
     data = load_video_data(
