@@ -64,6 +64,7 @@ class TrainLoop:
         pad_with_random_frames=True,
         args=None
     ):
+        print('\n\n RUNNING INIT TRAIN LOOP WITH RANK',  dist.get_rank(), '\n\n')
         assert args is not None
         self._args = args # This is only to be used when saving the model
         self.model = model
@@ -692,7 +693,7 @@ def parse_resume_step_from_filename(filename):
 def get_blob_logdir(args):
     root_dir = os.environ.get("DIFFUSION_BLOB_LOGDIR", "checkpoints")
     assert os.path.exists(root_dir), "Must create directory 'checkpoints' or specify existing DIFFUSION_BLOB_LOGDIR"
-    wandb_id = args.resume_id if args.resume_id is not None else wandb.run.id
+    wandb_id = args.resume_id if len(args.resume_id) > 0 else wandb.run.id
     return os.path.join(root_dir, wandb_id)
 
 
