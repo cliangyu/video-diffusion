@@ -164,6 +164,7 @@ class WandbOutputFormat(KVWriter, SeqWriter):
                        config=config,
                        dir=wandb_dir,
                        **wandb_kwargs)
+            print(f"Wandb run id: {wandb.run.id}")
 
     def writekvs(self, kvs):
         if dist.get_rank() == 0:
