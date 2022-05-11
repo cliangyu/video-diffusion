@@ -84,7 +84,7 @@ class TrainLoop:
         self.log_interval = log_interval
         self.sample_interval = sample_interval
         self.save_interval = save_interval
-        self.resume_checkpoint = resume_checkpoint if resume_checkpoint else find_resume_checkpoint()
+        self.resume_checkpoint = resume_checkpoint if resume_checkpoint else find_resume_checkpoint(self._args)
         print(self.resume_checkpoint)
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
@@ -430,15 +430,15 @@ class TrainLoop:
 
     def save(self):
         postfix = "latest" if self._args.save_latest_only else f"{(self.step):06d}"
-        to_save = {bf.join(get_blob_logdir(), f"opt_{postfix}.pt"): self.opt.state_dict()}
+        to_save = {bf.join(get_blob_logdir(self._args), f"opt_{postfix}.pt"): self.opt.state_dict()}
 
         # vmnote: make dir if it doesn't exist
-        Path(get_blob_logdir()).mkdir(parents=True, exist_ok=True)
+        Path(get_blob_logdir(self._args)).mkdir(parents=True, exist_ok=True)
 
         for rate, params in zip([0, *self.ema_rate],
                                 [self.master_params, *self.ema_params]):
             filename = f"ema_{rate}_{postfix}.pt" if rate else f"model_{postfix}.pt"
-            filepath = bf.join(get_blob_logdir(), filename)
+            filepath = bf.join(get_blob_logdir(self._args), filename)
             to_save[filepath] = {
                 "state_dict": self._master_params_to_state_dict(params),
                 "config": self._args.__dict__,
@@ -689,17 +689,18 @@ def parse_resume_step_from_filename(filename):
         return 0
 
 
-def get_blob_logdir():
+def get_blob_logdir(args):
     root_dir = os.environ.get("DIFFUSION_BLOB_LOGDIR", "checkpoints")
     assert os.path.exists(root_dir), "Must create directory 'checkpoints' or specify existing DIFFUSION_BLOB_LOGDIR"
-    return os.path.join(root_dir, wandb.run.id)
+    wandb_id = args.resume_id if args.resume_id is not None else wandb.run.id
+    return os.path.join(root_dir, wandb_id)
 
 
-def find_resume_checkpoint():
+def find_resume_checkpoint(args):
     """
     If there are checkpoints saved in get_blob_logdir(), will return the latest one
     """
-    logdir = get_blob_logdir()
+    logdir = get_blob_logdir(args)
     print('looking in', logdir)
     if not os.path.exists(logdir):
         return
@@ -707,7 +708,7 @@ def find_resume_checkpoint():
     if os.path.exists(logpath):
         return logpath
     else:
-        logpaths = glob.glob(os.path.join(get_blob_logdir(), 'model_*.pt'))
+        logpaths = glob.glob(os.path.join(get_blob_logdir(args), 'model_*.pt'))
         latest_step = -1
         logpath = None
         for d in logpaths:
