@@ -166,7 +166,8 @@ class WandbOutputFormat(KVWriter, SeqWriter):
                        **wandb_kwargs)
 
     def writekvs(self, kvs):
-        wandb.log(kvs)
+        if dist.get_rank() == 0:
+            wandb.log(kvs)
 
     def close(self):
         pass
