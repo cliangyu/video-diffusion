@@ -357,6 +357,7 @@ class CarlaDataset(MazesDataset):
     def __init__(self, train, shard, num_shards, *args, **kwargs):
         super().__init__(shard=0, num_shards=1, *args, **kwargs)  # dumy values of
         self.split_path = self.path / f"video_{'train' if train else 'test'}.csv"
+        self.cache_file(self.split_path)
         self.fnames = [line.rstrip('\n').split('/')[-1] for line in open(self.split_path, 'r').readlines() if '.pt' in line]
         self.fnames = self.fnames[shard::num_shards]
         print(f"Training on {len(self.fnames)} files (Carla dataset).")
