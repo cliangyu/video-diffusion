@@ -107,21 +107,24 @@ class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
     def set_videos(self, videos):
         self.videos = videos
 
-    def select_obs_indices(self, possible_next_indices, n):
+    def select_obs_indices(self, possible_next_indices, n, always_selected=(0,)):
         B = len(self.videos)
         embs = self.embed(possible_next_indices)
         batch_selected_indices = []
         for b in range(B):
             min_distances_from_selected = [np.inf for _ in possible_next_indices]
-            selected_indices = [possible_next_indices[0]]
-            selected_embs = [embs[b, 0]]  # always begin with next possible index
+            selected_indices = [possible_next_indices[always_selected[0]]]
+            selected_embs = [embs[b, always_selected[0]]]  # always begin with next possible index
             for i in range(1, n):
                 # update min_distances_from_selected
                 for f, dist in enumerate(min_distances_from_selected):
                     dist_to_newest = ((selected_embs[-1] - embs[b][f])**2).sum().cpu().item()
                     min_distances_from_selected[f] = min(dist, dist_to_newest)
-                # select one with maximum min_distance_from_selected
-                best_index = np.argmax(min_distances_from_selected)
+                if i < len(always_selected):
+                    best_index = always_selected[i]
+                else:
+                    # select one with maximum min_distance_from_selected
+                    best_index = np.argmax(min_distances_from_selected)
                 selected_indices.append(possible_next_indices[best_index])
                 selected_embs.append(embs[b, best_index])
             batch_selected_indices.append(selected_indices)
@@ -151,7 +154,7 @@ class AdaptiveAutoregressive(AdaptiveInferenceStrategyBase):
     def next_indices(self):
         first_idx = max(self._done_frames) + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
-        possible_obs_indices = sorted(self._done_frames)[::-1]
+        possible_obs_indices = sorted(self._done_frames)
         n_obs = self._max_frames - self._step_size
         obs_frame_indices = self.select_obs_indices(possible_obs_indices, n_obs)
         return obs_frame_indices, latent_frame_indices
@@ -293,10 +296,87 @@ class HierarchyNLevel(InferenceStrategyBase):
         return f"{super().typename}-{self.N}"
 
 
+class AdaptiveHierarchyNLevel(AdaptiveInferenceStrategyBase, HierarchyNLevel):
+
+    def next_indices(self):
+        """
+        Certainly not mainly copy-pasted from HierarchyNLevel...
+        """
+        if len(self._done_frames) == len(self._obs_frames):
+            self.current_level = 1
+            self.last_sampled_idx = max(self._obs_frames)
+
+        n_to_condition_on = self._max_frames - self._step_size
+        n_to_sample = self._step_size
+
+        # select the grid of latent_frame_indices (shifting by 1 to avoid already-existing frames)
+        idx = self.last_sampled_idx + self.sample_every
+        if len([i for i in range(idx, self._video_length) if i not in self._done_frames]) == 0:
+            # reset if there are no frames left to sample after idx
+            self.current_level += 1
+            self.last_sampled_idx = 0
+            idx = min(i for i in range(self._video_length) if i not in self._done_frames) - 1 + self.sample_every
+        if self.current_level == 1:
+            latent_frame_indices = list(int(i) for i in np.linspace(max(self._obs_frames)+1, self._video_length-0.001, n_to_sample))
+        else:
+            latent_frame_indices = []
+            while len(latent_frame_indices) < n_to_sample and idx < self._video_length:
+                if idx not in self._done_frames:
+                    latent_frame_indices.append(idx)
+                    idx += self.sample_every
+                elif idx in self._done_frames:
+                    idx += 1
+
+        # observe any frames in between latent frames
+        obs_frame_indices = [i for i in range(min(latent_frame_indices), max(latent_frame_indices)) if i in self._done_frames]
+        obs_before_and_after = n_to_condition_on - len(obs_frame_indices)
+
+        if obs_before_and_after < 2: # reduce step_size if necessary to ensure conditioning before + after latents
+            if self._step_size == 1:
+                raise Exception('Cannot condition before and after even with step size of 1')
+            sample_every = self.sample_every
+            self._step_size -= 1
+            result = self.next_indices()
+            self._step_size += 1
+            return result
+
+        # observe closest frame before and after latent frames
+        i = min(latent_frame_indices)
+        while i not in self._done_frames:
+            i -= 1
+        obs_frame_indices.append(i)
+        # actually closest two before...
+        i -= 1
+        while i not in self._done_frames:
+            i -= 1
+        obs_frame_indices.append(i)
+        i = max(latent_frame_indices)
+        while i not in self._done_frames and i < self._video_length:
+            i += 1
+        if i < self._video_length:
+            obs_frame_indices.append(i)
+
+        # select which other frames to use adaptively
+        possible_next_indices = list(self._done_frames)
+        always_selected = [possible_next_indices.index(i) for i in obs_frame_indices]
+        print('ALWAYS SELECTED', obs_frame_indices)
+        obs_frame_indices = self.select_obs_indices(
+            possible_next_indices=possible_next_indices, n=n_to_condition_on, always_selected=always_selected,
+        )
+
+        self.last_sampled_idx = max(latent_frame_indices)
+        return obs_frame_indices, latent_frame_indices
+
+
 def get_hierarchy_n_level(n):
     class Hierarchy(HierarchyNLevel):
         N = n
     return Hierarchy
+
+def get_adaptive_hierarchy_n_level(n):
+    class AdaptiveHierarchy(AdaptiveHierarchyNLevel):
+        N = n
+    return AdaptiveHierarchy
 
 inference_strategies = {
     'autoreg': Autoregressive,
@@ -309,4 +389,6 @@ inference_strategies = {
     'hierarchy-4': get_hierarchy_n_level(4),
     'hierarchy-5': get_hierarchy_n_level(5),
     'adaptive-autoreg': AdaptiveAutoregressive,
+    'adaptive-hierarchy-2': get_adaptive_hierarchy_n_level(2),
+    'adaptive-hierarchy-3': get_adaptive_hierarchy_n_level(3),
 }

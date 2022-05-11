@@ -196,7 +196,7 @@ if __name__ == "__main__":
     print(f"Saving samples to {args.eval_dir / 'elbos'}")
 
     # Load the test set
-    dataset = locals([f"get_{args.dataset_partition}_dataset"])(dataset_name=model_args.dataset, T=args.T)
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset, T=args.T)
     args.test_set_size = len(dataset)
     print(f"Dataset size = {args.test_set_size}")
     # Prepare the indices

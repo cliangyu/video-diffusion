@@ -40,6 +40,10 @@ def setup_dist():
     os.environ["RANK"] = str(comm.rank)
     os.environ["WORLD_SIZE"] = str(comm.size)
 
+    print('setting up world')
+    print("RANK", comm.rank)
+    print("SIZE", comm.size)
+
     port = comm.bcast(_find_free_port(), root=0)
     os.environ["MASTER_PORT"] = str(port)
     dist.init_process_group(backend=backend, init_method="env://")

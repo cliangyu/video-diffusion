@@ -15,6 +15,8 @@ import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 import wandb
+import torch.distributed as dist
+
 
 DEBUG = 10
 INFO = 20
@@ -156,14 +158,17 @@ class WandbOutputFormat(KVWriter, SeqWriter):
         wandb_dir = os.environ.get("MY_WANDB_DIR", "none")
         if wandb_dir == "none":
             wandb_dir = None
-        wandb.init(entity='universal-conditional-ddpm',
-                   project='video-diffusion',
-                   config=config,
-                   dir=wandb_dir,
-                   **wandb_kwargs)
+        if dist.get_rank() == 0:
+            wandb.init(entity='universal-conditional-ddpm',
+                       project='video-diffusion',
+                       config=config,
+                       dir=wandb_dir,
+                       **wandb_kwargs)
+            print(f"Wandb run id: {wandb.run.id}")
 
     def writekvs(self, kvs):
-        wandb.log(kvs)
+        if dist.get_rank() == 0:
+            wandb.log(kvs)
 
     def close(self):
         pass
