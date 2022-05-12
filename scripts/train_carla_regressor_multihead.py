@@ -45,22 +45,66 @@ def my_config():
     num_epochs = 25
     seed   = 0
     with_classifier = False
-    model = 'resnet18'
+    model = 'efficientnet_b7'
     with_transforms = True
 
 
-def imshow(inp, title=None):
-    """Imshow for Tensor."""
-    inp = inp.numpy().transpose((1, 2, 0))
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    inp = std * inp + mean
-    inp = np.clip(inp, 0, 1)
-    plt.imshow(inp)
-    if title is not None:
-        plt.title(title)
-    plt.pause(0.001)  # pause a bit so that plots are updated
+# --------- helpers ----------
 
+def last_layer(in_dim, out_dim):
+    return nn.Sequential(
+        nn.Dropout(p=0.5, inplace=True),
+        nn.Linear(in_dim, out_dim))
+
+def get_cell(target):
+    count, _, _ = np.histogram2d([target[0]], [target[1]], bins=10, range=[[0,400], [0,400]])
+    cell = count.flatten().nonzero()[0]
+    return cell
+
+
+class MultiHeadEfficientnet_b7(nn.Module):
+    def __init__(self):
+        super(MultiHeadEfficientnet_b7, self).__init__()
+        self.efficientnet_b7 = torchvision.models.efficientnet_b7(pretrained=True)
+        self.efficientnet_b7.classifier = nn.Identity()
+        self.classifier = last_layer(2560, 100)
+        # one for each cell
+        self.regressors = nn.ModuleList([last_layer(2560, 2) for i in range(100)])
+
+    def forward(self, inputs, cells):
+        emb = self.efficientnet_b7(inputs)
+        classes = self.classifier(emb)
+        coords = []
+        for idx, cell in enumerate(cells):
+            coords.append(self.regressors[cell](emb[idx]))
+        coords = torch.stack(coords)
+        return coords, classes
+
+class CARLADataset(torch.utils.data.Dataset):
+    def __init__(self, root, transforms=None):
+        self.root = root
+        self.transforms = transforms
+        # load all image files, sorting them to ensure that they are aligned
+        self.imgs = sorted([p.parts[-1] for p in self.root.glob("video*.npy")])
+        self.labels = sorted([p.parts[-1] for p in self.root.glob("coords*.npy")])
+
+    def __getitem__(self, idx):
+        # load images and masks
+        img = np.load(self.root / self.imgs[idx])
+        target = np.load(self.root / self.labels[idx])
+
+        # use x,y only
+        target = target[[0,1]]
+
+        cell = get_cell(target)
+
+        if self.transforms is not None:
+            img = self.transforms(img)
+
+        return img, target, cell
+
+    def __len__(self):
+        return len(self.imgs)
 
 def init(config):
     args = mlh.default_init(config)
@@ -128,65 +172,28 @@ def init(config):
     # ------- set up model ----------
     # ===============================
 
-    if args.model == 'resnet18':
-        model_conv = torchvision.models.resnet18(pretrained=True)
-        num_ftrs = model_conv.fc.in_features
-        last_layer = nn.Linear(num_ftrs, 3) if args.with_classifier else nn.Linear(num_ftrs, 2)
-        model_conv.fc = last_layer
-
-    elif args.model == 'efficientnet_b7':
-        model_conv = torchvision.models.efficientnet_b7(pretrained=True)
-        num_ftrs = model_conv.classifier[1].in_features
-        last_layer = nn.Linear(num_ftrs, 3) if args.with_classifier else nn.Linear(num_ftrs, 2)
-        model_conv.classifier[1] = last_layer
-
+    model_conv = MultiHeadEfficientnet_b7()
     args.model = model_conv.to(args.device)
-    args.criterion = nn.MSELoss()
-    args.optimizer = optim.SGD(model_conv.parameters(), lr=args.lr, momentum=0.9)
-    args.scheduler = lr_scheduler.StepLR(args.optimizer, step_size=7, gamma=0.1) # Decay LR by a factor of 0.1 every 7 epochs
 
 
     return args
 
-class CARLADataset(torch.utils.data.Dataset):
-    def __init__(self, root, transforms=None):
-        self.root = root
-        self.transforms = transforms
-        # load all image files, sorting them to ensure that they are aligned
-        self.imgs = sorted([p.parts[-1] for p in self.root.glob("video*.npy")])
-        self.labels = sorted([p.parts[-1] for p in self.root.glob("coords*.npy")])
 
-    def __getitem__(self, idx):
-        # load images and masks
-        img = np.load(self.root / self.imgs[idx])
-        target = np.load(self.root / self.labels[idx])
 
-        # use x,y only
-        target = target[[0,1]]
-
-        if self.transforms is not None:
-            img = self.transforms(img)
-
-        return img, target
-
-    def __len__(self):
-        return len(self.imgs)
 
 def train(args):
     best_model_wts = copy.deepcopy(args.model.state_dict())
     best_loss = np.float('inf')
 
     model       = args.model
-    criterion   = args.criterion
-    optimizer   = args.optimizer
-    scheduler   = args.scheduler
     dataloaders = args.dataloaders
     device      = args.device
 
-    # only used if args.with_classifier is True
-    classifier_criterion = nn.BCELoss()
-    m = nn.Sigmoid()
+    criterion            = nn.MSELoss()
+    classifier_criterion = nn.CrossEntropyLoss()
 
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1) # Decay LR by a factor of 0.1 every 7 epochs
 
     metric_logger = mlh.MetricLogger(wandb=wandb)
 
@@ -200,11 +207,15 @@ def train(args):
                 model.eval()   # Set model to evaluate mode
 
             running_loss = 0.0
+            running_classification_loss = 0.0
+            running_regression_loss = 0.0
 
             # Iterate over data.
-            for inputs, labels in dataloaders[phase]:
+            # import ipdb; ipdb.set_trace()
+            for inputs, coords, cells in dataloaders[phase]:
                 inputs = inputs.to(device)
-                labels = labels.to(device).float()
+                coords = coords.to(device).float()
+                cells = cells.to(device)
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
@@ -212,13 +223,13 @@ def train(args):
                 # forward
                 # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
-                    outputs = model(inputs)
-                    if args.with_classifier:
-                        reg_loss  = criterion(outputs[:, :2], labels[:, :2])
-                        clas_loss = classifier_criterion(m(outputs[:, 2]), labels[:, 2])
-                        loss = reg_loss + clas_loss
-                    else:
-                        loss = criterion(outputs, labels)
+                    pred, classes = model(inputs, cells)
+                    reg_loss  = criterion(pred, coords)
+                    class_loss = classifier_criterion(classes, cells.flatten())
+                    loss = class_loss
+                    # loss = reg_loss
+                    # loss = reg_loss + class_loss
+
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
@@ -226,13 +237,19 @@ def train(args):
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
+                running_classification_loss += reg_loss.item() * inputs.size(0)
+                running_regression_loss += class_loss.item() * inputs.size(0)
 
             if phase == 'train':
                 scheduler.step()
 
             epoch_loss = running_loss / args.dataset_sizes[phase]
+            epoch_classification_loss = running_classification_loss / args.dataset_sizes[phase]
+            epoch_regression_loss = running_regression_loss / args.dataset_sizes[phase]
 
-            losses[phase] = epoch_loss
+            losses[f"{phase}_total_loss"] = epoch_loss
+            losses[f"{phase}_regression_loss"] = epoch_classification_loss
+            losses[f"{phase}_classification_loss"] = epoch_regression_loss
 
             # deep copy the model
             if phase == 'test' and epoch_loss < best_loss:
