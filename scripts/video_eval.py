@@ -242,7 +242,13 @@ if __name__ == "__main__":
             if args.T is None:
                 args.T = model_config["T"]
     if args.batch_size is None:
-        args.batch_size = 16 if args.T < 300 else 4
+        if "mazes" in args.dataset:
+            args.batch_size = 16
+        elif "minerl" in args.dataset:
+            args.batch_size = 8
+        elif "carla" in args.dataset:
+            raise NotImplementedError("Default batch size for CARLA dataset has not been decided yet.")
+            args.batch_size = None
     # Load dataset
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values
