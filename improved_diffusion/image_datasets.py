@@ -11,6 +11,8 @@ from pathlib import Path
 import shutil
 import glob
 
+from .test_util import Protect
+
 NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
     from mpi4py import MPI
@@ -300,7 +302,8 @@ class BaseDataset(Dataset):
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             src_path = self.get_src_path(path)
-            shutil.copyfile(str(src_path), str(path))
+            with Protect(path):
+                shutil.copyfile(str(src_path), str(path))
 
     @staticmethod
     def get_src_path(path):

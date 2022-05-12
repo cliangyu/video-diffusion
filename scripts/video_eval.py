@@ -46,7 +46,7 @@ class LazyDataFetch:
             for idx, filenames in self.filenames_dict.items():
                 assert len(filenames) >= num_samples, f"Expected at least {num_samples} samples for each video, but found {len(filenames)} for video #{idx}"
         self.keys = list(self.filenames_dict.keys())
-        self.dataset = get_test_dataset(dataset)
+        self.dataset = dataset
         self.dataset_drange = dataset_drange
         assert self.dataset_drange[1] > self.dataset_drange[0]
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
                         help="Video length. If not given, the same T as used for training will be used.")
     parser.add_argument("--num_samples", type=int, default=None,
                         help="Number of generated samples per test video.")
-    parser.add_argument("--batch_size", type=int, default=16,
+    parser.add_argument("--batch_size", type=int, default=None,
                         help="(Only used for FVD) Batch size for extracting video features (extracted from the I3D model). Default is 16.")
     args = parser.parse_args()
 
@@ -241,11 +241,19 @@ if __name__ == "__main__":
                 args.dataset = model_config["dataset"]
             if args.T is None:
                 args.T = model_config["T"]
+    if args.batch_size is None:
+        if "mazes" in args.dataset:
+            args.batch_size = 16
+        elif "minerl" in args.dataset:
+            args.batch_size = 8
+        elif "carla" in args.dataset:
+            raise NotImplementedError("Default batch size for CARLA dataset has not been decided yet.")
+            args.batch_size = None
     # Load dataset
-    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values
     data_fetch = LazyDataFetch(
-        dataset=args.dataset,
+        dataset=dataset,
         eval_dir=args.eval_dir,
         obs_length=args.obs_length,
         dataset_drange=drange,
@@ -282,7 +290,7 @@ if __name__ == "__main__":
             num_samples=args.num_samples))
     if "fvd" in args.modes:
         data_fetch_with_obs = LazyDataFetch(
-            dataset=args.dataset,
+            dataset=dataset,
             eval_dir=args.eval_dir,
             obs_length=args.obs_length,
             dataset_drange=drange,

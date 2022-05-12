@@ -114,7 +114,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
 
 
 def main(args, model, diffusion, dataloader, dataset_indices=None):
-    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
     cnt = 0
@@ -144,7 +144,7 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    optimal_schedule_path = None if not args.optimal else args.eval_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
     if 'adaptive' in args.inference_mode:
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
         dataset = globals()[f"get_{args.dataset_partition}_dataset"](dataset_name=dataset_name, T=args.T)
@@ -185,8 +185,8 @@ def visualise(args):
         frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}"
-    if args.optimal:
-        path += "_optimal"
+    if args.optimality is not None:
+        path += "_optimal-" + args.optimality
     path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if 'adaptive' in args.inference_mode:
         for i in range(len(batch)):
@@ -221,10 +221,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
-    parser.add_argument("--optimal", action='store_true', help="Use the optimal schedule for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py.")
+    parser.add_argument("--optimality", type=str, default=None,
+        choices=["linspace-t", "random-t",
+                 "linspace-t-force-nearby", "random-t-force-nearby"],
+                 help="Whcih optimality schedule to use for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py. Default is to not use any optimality.")
     args = parser.parse_args()
 
-    if args.just_visualise and not args.optimal:
+    if args.just_visualise and args.optimality is None:
         visualise(args)
         exit()
     drange = [-1, 1] # Range of the generated samples' pixel values
@@ -265,7 +268,7 @@ if __name__ == "__main__":
     elif args.subset_size is not None:
         #indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
         print(f"Only generating predictions for the first {args.subset_size} videos of the dataset.")
-        dataset = torch.utils.data.Subset(dataset, list(range(args.subset_size)))
+        args.indices = list(range(args.subset_size))
     elif args.indices is None:
         args.indices = list(range(len(dataset)))
         print(f"Generating predictions for the whole dataset.")
