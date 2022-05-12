@@ -165,6 +165,13 @@ class WandbOutputFormat(KVWriter, SeqWriter):
                        dir=wandb_dir,
                        **wandb_kwargs)
             print(f"Wandb run id: {wandb.run.id}")
+            num_nodes = 1
+            if "SLURM_JOB_NODELIST" in os.environ:
+                assert "SLURM_JOB_NUM_NODES" in os.environ
+                num_nodes = int(os.environ['SLURM_JOB_NUM_NODES'])
+                print(f"Node list: {os.environ['SLURM_JOB_NODELIST']}")
+            wandb.log({"num_nodes": num_nodes})
+            print(f"Number of nodes: {num_nodes}")
 
     def writekvs(self, kvs):
         if dist.get_rank() == 0:
