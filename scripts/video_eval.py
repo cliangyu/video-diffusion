@@ -226,7 +226,7 @@ if __name__ == "__main__":
                         help="Video length. If not given, the same T as used for training will be used.")
     parser.add_argument("--num_samples", type=int, default=None,
                         help="Number of generated samples per test video.")
-    parser.add_argument("--batch_size", type=int, default=16,
+    parser.add_argument("--batch_size", type=int, default=None,
                         help="(Only used for FVD) Batch size for extracting video features (extracted from the I3D model). Default is 16.")
     args = parser.parse_args()
 
@@ -241,6 +241,8 @@ if __name__ == "__main__":
                 args.dataset = model_config["dataset"]
             if args.T is None:
                 args.T = model_config["T"]
+    if args.batch_size is None:
+        args.batch_size = 16 if args.T < 300 else 4
     # Load dataset
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values
