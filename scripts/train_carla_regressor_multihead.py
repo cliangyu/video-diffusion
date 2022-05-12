@@ -53,7 +53,7 @@ def my_config():
 
 def last_layer(in_dim, out_dim):
     return nn.Sequential(
-        nn.Dropout(p=0.5, inplace=True),
+        nn.Dropout(p=0.5, inplace=False),
         nn.Linear(in_dim, out_dim))
 
 def get_cell(target):
@@ -197,6 +197,8 @@ def train(args):
 
     metric_logger = mlh.MetricLogger(wandb=wandb)
 
+    torch.autograd.set_detect_anomaly(True)
+
     for epoch in metric_logger.step(range(args.num_epochs)):
         losses = {}
         # Each epoch has a training and validation phase
@@ -205,6 +207,8 @@ def train(args):
                 model.train()  # Set model to training mode
             else:
                 model.eval()   # Set model to evaluate mode
+
+
 
             running_loss = 0.0
             running_classification_loss = 0.0
@@ -226,9 +230,9 @@ def train(args):
                     pred, classes = model(inputs, cells)
                     reg_loss  = criterion(pred, coords)
                     class_loss = classifier_criterion(classes, cells.flatten())
-                    loss = class_loss
+                    # loss = class_loss
                     # loss = reg_loss
-                    # loss = reg_loss + class_loss
+                    loss = reg_loss + class_loss
 
                     # backward + optimize only if in training phase
                     if phase == 'train':
