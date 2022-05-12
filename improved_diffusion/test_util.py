@@ -66,8 +66,8 @@ def get_eval_run_identifier(args):
         - obs_length
     """
     res = args.inference_mode
-    if args.optimal:
-        res += "_optimal"
+    if hasattr(args, "optimality") and args.optimality is not None:
+        res += f"_optimal-{args.optimality}"
     res += f"_{args.max_frames}_{args.step_size}_{args.T}_{args.obs_length}"
     if hasattr(args, "dataset_partition") and args.dataset_partition == "train":
         res = "trainset_" + res

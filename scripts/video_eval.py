@@ -46,7 +46,7 @@ class LazyDataFetch:
             for idx, filenames in self.filenames_dict.items():
                 assert len(filenames) >= num_samples, f"Expected at least {num_samples} samples for each video, but found {len(filenames)} for video #{idx}"
         self.keys = list(self.filenames_dict.keys())
-        self.dataset = get_test_dataset(dataset)
+        self.dataset = dataset
         self.dataset_drange = dataset_drange
         assert self.dataset_drange[1] > self.dataset_drange[0]
 
@@ -242,10 +242,10 @@ if __name__ == "__main__":
             if args.T is None:
                 args.T = model_config["T"]
     # Load dataset
-    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values
     data_fetch = LazyDataFetch(
-        dataset=args.dataset,
+        dataset=dataset,
         eval_dir=args.eval_dir,
         obs_length=args.obs_length,
         dataset_drange=drange,
@@ -282,7 +282,7 @@ if __name__ == "__main__":
             num_samples=args.num_samples))
     if "fvd" in args.modes:
         data_fetch_with_obs = LazyDataFetch(
-            dataset=args.dataset,
+            dataset=dataset,
             eval_dir=args.eval_dir,
             obs_length=args.obs_length,
             dataset_drange=drange,

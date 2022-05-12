@@ -104,9 +104,9 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
             print('Saved to', fname)
         cnt += len(batch)
 
-def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_indices):
-
-    x0 = torch.zeros_like(batch[:, :args.max_frames].to(dist_util.dev()))
+def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_indices, t_seq=None):
+    max_frames = len(obs_indices[0]) + len(lat_indices[0]) # This assumes that items in obs_indices have the same length. Same for lat_indices.
+    x0 = torch.zeros_like(batch[:, :max_frames].to(dist_util.dev()))
     obs_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     lat_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     kinda_marg_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
@@ -123,13 +123,14 @@ def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_
                         obs_mask=obs_mask,
                         latent_mask=lat_mask,
                         kinda_marg_mask=kinda_marg_mask)
-    metrics = diffusion.calc_bpd_loop(
-        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, latent_mask=lat_mask
+    metrics = diffusion.calc_bpd_loop_subsampled(
+        model, x0, clip_denoised=clip_denoised, model_kwargs=model_kwargs, latent_mask=lat_mask,
+        t_seq=t_seq
     )
 
     metrics = {k: v.sum(dim=1) if v.ndim > 1 else v for k, v in metrics.items()}
     # sum (rather than mean) over frame dimension by multiplying by number of frames
-    metrics = {k: v*args.max_frames for (k, v) in metrics.items()}
+    metrics = {k: v*max_frames for (k, v) in metrics.items()}
     metrics = {k: v.detach().cpu().numpy() for k, v in metrics.items()}
     return metrics
 
@@ -158,10 +159,13 @@ if __name__ == "__main__":
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
     parser.add_argument("--clip_denoised", type=str2bool, default=True,
                         help="Clip model predictions of x0 to be in valid range.")
-    parser.add_argument("--optimal", action='store_true', help="Use the optimal schedule for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py.")
+    parser.add_argument("--optimality", type=str, default=None,
+        choices=["linspace-t", "random-t",
+                 "linspace-t-force-nearby", "random-t-force-nearby"],
+                 help="Whcih optimality schedule to use for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py. Default is to not use any optimality.")
     args = parser.parse_args()
     args.adaptive = 'adaptive' in args.inference_mode
-    assert not args.optimal, "Not implemented for ELBO computation."
+    assert args.optimality is None, "Not implemented for ELBO computation."
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
