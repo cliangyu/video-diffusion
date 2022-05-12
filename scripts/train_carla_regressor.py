@@ -44,6 +44,9 @@ def my_config():
     # Training settings
     num_epochs = 25
     seed   = 0
+    with_classifier = False
+    model = 'resnet18'
+    with_transforms = True
 
 
 def imshow(inp, title=None):
@@ -66,21 +69,44 @@ def init(config):
     # ===============================
     # ------- set up data -----------
     # ===============================
-    data_transforms = {
-        'train': transforms.Compose([
-            # transforms.ToPILImage(),
-            # transforms.RandomResizedCrop(224),
-            # transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ]),
-        'test': transforms.Compose([
-            # transforms.ToPILImage(),
-            # transforms.Resize(256),
-            # transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ]),}
+    if args.with_transforms:
+        data_transforms = {
+            'train': transforms.Compose([
+                # transforms.ToPILImage(),
+                # transforms.RandomResizedCrop(224),
+                # transforms.RandomHorizontalFlip(),
+                transforms.ToPILImage(),
+                transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+                transforms.ColorJitter(brightness=.1, hue=.1),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                ]),
+            'test': transforms.Compose([
+                # transforms.ToPILImage(),
+                # transforms.Resize(256),
+                # transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                ]),}
+    else:
+        data_transforms = {
+            'train': transforms.Compose([
+                # transforms.ToPILImage(),
+                # transforms.RandomResizedCrop(224),
+                # transforms.RandomHorizontalFlip(),
+                # transforms.ToPILImage(),
+                # transforms.GaussianBlur(kernel_size=(5, 9), sigma=(0.1, 5)),
+                # transforms.ColorJitter(brightness=.1, hue=.1),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                ]),
+            'test': transforms.Compose([
+                # transforms.ToPILImage(),
+                # transforms.Resize(256),
+                # transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                ]),}
 
     args.dataloaders = {
         "train": torch.utils.data.DataLoader(
@@ -101,11 +127,18 @@ def init(config):
     # ===============================
     # ------- set up model ----------
     # ===============================
-    model_conv = torchvision.models.resnet18(pretrained=True)
 
-    # Parameters of newly constructed modules have requires_grad=True by default
-    num_ftrs = model_conv.fc.in_features
-    model_conv.fc = nn.Linear(num_ftrs, 2)
+    if args.model == 'resnet18':
+        model_conv = torchvision.models.resnet18(pretrained=True)
+        num_ftrs = model_conv.fc.in_features
+        last_layer = nn.Linear(num_ftrs, 3) if args.with_classifier else nn.Linear(num_ftrs, 2)
+        model_conv.fc = last_layer
+
+    elif args.model == 'efficientnet_b7':
+        model_conv = torchvision.models.efficientnet_b7(pretrained=True)
+        num_ftrs = model_conv.classifier[1].in_features
+        last_layer = nn.Linear(num_ftrs, 3) if args.with_classifier else nn.Linear(num_ftrs, 2)
+        model_conv.classifier[1] = last_layer
 
     args.model = model_conv.to(args.device)
     args.criterion = nn.MSELoss()
@@ -150,6 +183,11 @@ def train(args):
     dataloaders = args.dataloaders
     device      = args.device
 
+    # only used if args.with_classifier is True
+    classifier_criterion = nn.BCELoss()
+    m = nn.Sigmoid()
+
+
     metric_logger = mlh.MetricLogger(wandb=wandb)
 
     for epoch in metric_logger.step(range(args.num_epochs)):
@@ -175,7 +213,12 @@ def train(args):
                 # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
                     outputs = model(inputs)
-                    loss = criterion(outputs, labels)
+                    if args.with_classifier:
+                        reg_loss  = criterion(outputs[:, :2], labels[:, :2])
+                        clas_loss = classifier_criterion(m(outputs[:, 2]), labels[:, 2])
+                        loss = reg_loss + clas_loss
+                    else:
+                        loss = criterion(outputs, labels)
                     # backward + optimize only if in training phase
                     if phase == 'train':
                         loss.backward()
@@ -195,6 +238,9 @@ def train(args):
             if phase == 'test' and epoch_loss < best_loss:
                 best_loss = epoch_loss
                 best_model_wts = copy.deepcopy(model.state_dict())
+                torch.save(model.state_dict(), os.path.join(wandb.run.dir, f"model_{epoch}.pth"))
+                wandb.save(os.path.join(wandb.run.dir, f"model_{epoch}.pth"))
+
 
         metric_logger.update(**losses)
 
@@ -213,5 +259,5 @@ def command_line_entry(_run,_config):
     model = train(args)
 
     # "model.pth" is saved in wandb.run.dir & will be uploaded at the end of training
-    torch.save(model.state_dict(), os.path.join(wandb.run.dir, "model.pth"))
+    torch.save(model.state_dict(), os.path.join(wandb.run.dir, "model_best.pth"))
 

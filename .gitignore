@@ -1,6 +1,11 @@
 notebooks/.*
 samples
+experiments/*
 checkpoints
+notebooks/sampled_videos/*
+notebooks/data/*
+notebooks/*.zip
+notebooks/models/*
 wandb
 tmp
 *.egg-info
