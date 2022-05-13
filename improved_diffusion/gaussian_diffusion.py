@@ -840,8 +840,17 @@ class GaussianDiffusion:
         vb = []
         xstart_mse = []
         mse = []
+        # A hacky way to handle computing bpd with a random subset of the timesteps,
+        # where each row of t_seq is timesteps to one batch item.
+        is_2d_t_seq = False
+        if isinstance(t_seq, np.ndarray) and t_seq.ndim == 2:
+            is_2d_t_seq = True
+            t_seq = t_seq.transpose()
         for t in t_seq:
-            t_batch = th.tensor([t] * batch_size, device=device)
+            if is_2d_t_seq:
+                t_batch = th.tensor(t, device=device)
+            else:
+                t_batch = th.tensor([t] * batch_size, device=device)
             noise = th.randn_like(x_start)
             x_t = self.q_sample(x_start=x_start, t=t_batch, noise=noise)
             # Calculate VLB term at the current timestep
