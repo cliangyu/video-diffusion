@@ -4,6 +4,11 @@ import time
 import lpips as lpips_metric
 
 
+def not_spatial_average(in_tens, keepdim=True):
+    B, C, H, W = in_tens.shape
+    reshaped = in_tens.view(B, C*H*W, 1, 1) if keepdim else in_tens.view(B, C*H*W)
+    return reshaped / (H*W)**0.5
+
 class LpipsEmbedder(lpips_metric.LPIPS):
     def scale_by_proj_weights(self, proj, x):
         conv = proj.model[-1]
@@ -15,8 +20,8 @@ class LpipsEmbedder(lpips_metric.LPIPS):
         feats = {}
         for kk in range(self.L):
             feats[kk] = lpips_metric.normalize_tensor(outs[kk])
-        # res = [lpips_metric.spatial_average(self.lins[kk](feats[kk]), keepdim=True) for kk in range(self.L)]
-        res = [lpips_metric.spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
+        # TODO not spatial average
+        res = [not_spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
         return torch.cat(res, dim=1)
 
 
@@ -377,6 +382,18 @@ def get_adaptive_hierarchy_n_level(n):
     class AdaptiveHierarchy(AdaptiveHierarchyNLevel):
         N = n
     return AdaptiveHierarchy
+
+
+class GoalDirectedInferenceStrategy(HierarchyNLevel):
+
+    def __next__(self):
+        obs_frame_indices, latent_frame_indices = super().__next__()
+        if self._done_frames == self._obs_frames:  # then it is the first step
+            last_frame = self._video_length-1
+            assert last_frame in latent_frame_indices
+            latent_frame_indices.remove(last_frame)
+            obs_frame_indices.append(last_frame)
+
 
 inference_strategies = {
     'autoreg': Autoregressive,
