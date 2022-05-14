@@ -9,8 +9,6 @@ import os, sys
 import subprocess
 from tqdm.auto import tqdm
 from pathlib import Path
-import json
-import functools
 
 from improved_diffusion.script_util import (
     video_model_and_diffusion_defaults,
@@ -62,28 +60,6 @@ def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
 
 
 @torch.no_grad()
-def get_mse_linspace(latent_frame_indices, candidate_idx, model, diffusion, dataloader, device,
-                     num_timesteps, inference_step):
-    obs_incides = [[candidate_idx] for _ in range(dataloader.batch_size)]
-    lat_indices = [latent_frame_indices for _ in range(dataloader.batch_size)]
-    mse_all = []
-    for cnt, (batch, _) in enumerate(dataloader):
-        batch = batch.to(device)
-        t_seq = diffusion.num_timesteps - 1 - np.linspace(0, diffusion.num_timesteps, num_timesteps, endpoint=False, dtype=int)
-        metrics = run_bpd_evaluation(
-            model=model, diffusion=diffusion,
-            batch=batch, clip_denoised=True,
-            obs_indices=obs_incides[:len(batch)], lat_indices=lat_indices[:len(batch)],
-            t_seq=t_seq)
-        metrics = {k : v / num_timesteps * diffusion.num_timesteps for k, v in metrics.items()}
-        mse = metrics["mse"]
-        assert mse.ndim == 1
-        mse_all.append(mse)
-    mse_all = np.concatenate(mse_all, axis=0)
-    return mse_all.mean(), mse_all.std()
-
-
-@torch.no_grad()
 def get_mse_random(latent_frame_indices, candidate_idx, model, diffusion, dataloader, device,
                    num_timesteps, inference_step):
     obs_incides = [[candidate_idx] for _ in range(dataloader.batch_size)]
@@ -130,7 +106,59 @@ def force_nearby(latent_frame_indices, obs_frame_indices, done_frame_indices):
         obs_frame_indices.add(idx)
 
 
-def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
+@torch.no_grad()
+def get_mse_linspace(latent_frame_indices, obs_frame_indices,
+                     model, diffusion, dataloader, device,
+                     num_timesteps):
+    """ Given a set of latent frame incides and a set of observed frame indices,
+        computes model's MSE in predicting the latent frames given the observed frames
+        for different videos taken from the dataloader and different DDPM timesteps,
+        on a grid with size specified by num_timesteps.
+
+    Args:
+        latent_frame_indices (list): List of latent frame indices
+        obs_frame_indices (list): List of observed frame indices
+        model (torch.nn.Module): The DDPM model
+        diffusion (SpacedDiffusion): The Gaussian diffusion process
+        dataloader (torhc.utils.data.DataLoader): The dataloader
+        device (torch.device)
+        num_timesteps (int): Number of timesteps equally spaced on the set of DDPM timesteps.
+
+    Returns:
+        dict: A dictionary of {DDPM-timestep: [list of MSE values for test videos]}
+    """
+    obs_incides = [obs_frame_indices for _ in range(dataloader.batch_size)]
+    lat_indices = [latent_frame_indices for _ in range(dataloader.batch_size)]
+    mse_all = []
+    t_seq_all = diffusion.num_timesteps - 1 - np.linspace(0, diffusion.num_timesteps, num_timesteps, endpoint=False, dtype=int)
+    video_cnt = 0
+    for batch, _ in dataloader:
+        batch = batch.to(device)
+
+        t_seq = t_seq_all.take(range(video_cnt, video_cnt + len(batch)), mode="wrap")
+        t_seq = t_seq.reshape(-1, 1) # Add a second dimension of size 1
+        video_cnt += len(batch)
+
+        metrics = run_bpd_evaluation(
+            model=model, diffusion=diffusion,
+            batch=batch, clip_denoised=True,
+            obs_indices=obs_incides[:len(batch)], lat_indices=lat_indices[:len(batch)],
+            t_seq=t_seq)
+        metrics = {k : v / t_seq.shape[1] * diffusion.num_timesteps for k, v in metrics.items()}
+        mse = metrics["mse"]
+        assert mse.ndim == 1
+        mse_all.append(mse)
+    mse_all = np.concatenate(mse_all, axis=0)
+    t_all = t_seq_all.take(range(len(mse_all)), mode="wrap")
+    res = {}
+    for t, mse in zip(t_all, mse_all):
+        if t not in res:
+            res[t] = []
+        res[t].append(mse)
+    return res
+
+
+def main(args, model, diffusion, dataset, schedule_path, verbose=True):
     task_id = int(os.environ["SLURM_ARRAY_TASK_ID"]) if "SLURM_ARRAY_TASK_ID" in os.environ else None
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
         video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size
@@ -142,7 +170,7 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
             saved_schedule = torch.load(schedule_path)
     else:
         saved_schedule = {}
-    for cnt, (_, latent_frame_indices) in enumerate(tqdm(frame_indices_iterator)):
+    for cnt, (_, latent_frame_indices) in enumerate(tqdm(frame_indices_iterator, leave=False)):
         if task_id is not None and cnt != task_id:
             print(f"Skipping inference step {cnt}; not for this instance of array job.")
             continue
@@ -155,32 +183,47 @@ def main(args, model, diffusion, dataloader, schedule_path, verbose=True):
             force_nearby(latent_frame_indices=latent_frame_indices,
                          obs_frame_indices=obs_frame_indices,
                          done_frame_indices=frame_indices_iterator._done_frames)
-        if "linspace-t" in args.optimality:
-            get_metric_fn = get_mse_linspace
-        elif "random-t" in args.optimality:
-            get_metric_fn = get_mse_random
-        else:
-            raise ValueError(f"Unrecognized optimality {args.optimality}.")
         while len(obs_frame_indices) < min(len(frame_indices_iterator._done_frames), n_to_condition_on):
+            # Prepare the dataloader and the metric computation function based on the optimality
+            if "linspace-t" in args.optimality:
+                get_metric_fn = get_mse_linspace
+                # Get a new subset of the dataset for each  step of choosing a frame in each inference step.
+                # Each "step" here means choosing one frame in one  inference step of the model
+                # (i.e., choosing one frame in one line of the inference strategy visualization)
+                indices = np.random.RandomState(cnt * 1000 + len(obs_frame_indices)).choice(len(dataset), args.subset_size, replace=False)
+                assert len(indices) % args.num_timesteps == 0, f"Subset size should ({len(indices)}) be divisible by the number of timesteps ({args.num_timesteps})."
+            elif "random-t" in args.optimality:
+                raise NotImplementedError("We decided to not use random-t anymore due to its high variance.")
+            else:
+                raise ValueError(f"Unrecognized optimality {args.optimality}.")
+            # Prepare the dataloader
+            dataloader = DataLoader(torch.utils.data.Subset(dataset, indices), batch_size=args.batch_size, shuffle=False, drop_last=False)
+
             # Find the next best observed frame index
-            best_idx = -1
-            best_metric = np.inf
-            for candidate_idx in frame_indices_iterator._done_frames:
+            metrics = {} # Will be a dictionary of the form {frame_idx: {diffusion_t: [list of metric values]}}
+            for candidate_idx in tqdm(frame_indices_iterator._done_frames):
                 if candidate_idx in latent_frame_indices or candidate_idx in obs_frame_indices:
                     # Skip the latent frames (these are just added to the done list by the InferenceStrategyBase class)
                     # Also skip the frames that are already in the observed list
                     continue
-                mean, std = get_metric_fn(latent_frame_indices=latent_frame_indices,
-                                          candidate_idx=candidate_idx,
-                                          model=model, diffusion=diffusion,
-                                          dataloader=dataloader, device=args.device,
-                                          num_timesteps=args.num_timesteps,
-                                          inference_step=cnt)
-                if mean < best_metric:
-                    best_metric, best_idx = mean, candidate_idx
+                metrics[candidate_idx] = get_metric_fn(
+                    latent_frame_indices=latent_frame_indices,
+                    obs_frame_indices=list(obs_frame_indices) + [candidate_idx],
+                    model=model, diffusion=diffusion,
+                    dataloader=dataloader, device=args.device,
+                    num_timesteps=args.num_timesteps)
                 if verbose:
-                    print(f"Candidate frame {candidate_idx}: ({mean}, {std}) --- best so far: {obs_frame_indices} + {best_idx} ({best_metric})")
+                    cur_metrics_array = np.array(list(metrics[candidate_idx].values()))
+                    cur_metrics_array = cur_metrics_array.mean(axis=0)
+                    print(f"(Step #{cnt}) Candidate frame {candidate_idx}: ({cur_metrics_array.mean(axis=0)}, {cur_metrics_array.std(axis=0)}) --- Latent: {latent_frame_indices} --- Observed: {list(obs_frame_indices)}")
+            # Transfrom metrics form the dictionary format to a list of piars of (candidate_idx, candidate_avg_metric)
+            metrics = [(candidate_idx, np.array(list(candidate_metrics.values())).mean())
+                for candidate_idx,candidate_metrics in metrics.items()]
+            metrics = sorted(metrics, key=lambda x: x[1])
+            # Pick the best frame
+            best_idx, best_metric = metrics[0]
             obs_frame_indices.add(best_idx)
+            print(f"(Step #{cnt}) Best frame {best_idx}, metric = {best_metric}")
         obs_frame_indices = sorted(list(obs_frame_indices))
         inference_schedule[cnt] = obs_frame_indices
         print(f"Step #{cnt}:\n\tLatent: {latent_frame_indices}\n\tObserved: {obs_frame_indices}")
@@ -217,17 +260,16 @@ if __name__ == "__main__":
                         help="Length of the videos. If not specified, it will be inferred from the dataset.")
     parser.add_argument("--subset_size", type=int, default=None,
                         help="If not None, only use a subset of the dataset. Default is 50.")
-    parser.add_argument("--num_timesteps", type=int, default=None,
+    parser.add_argument("--num_timesteps", type=int, default=10,
                         help="Number of timesteps to use for estimating the ELBO. Only used in mse-linsapce.")
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
     # Job submission arguments
     parser.add_argument("--submit", action="store_true", help="If given, figures out which steps of the optimal schedule are remaining to be optimized, then submits an array job doing them.")
     parser.add_argument("--max_slurm_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
     args = parser.parse_args()
-    if args.num_timesteps is None:
-        args.num_timesteps = 10
+
     if args.subset_size is None:
-        args.subset_size = 10 if "linspace-t" in args.optimality else 100
+        args.subset_size = args.num_timesteps * 10 #TODO: un-comment
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
@@ -273,14 +315,9 @@ if __name__ == "__main__":
     # Load the test set
     dataset = get_train_dataset(dataset_name=model_args.dataset)
     print(f"Dataset size = {len(dataset)}")
-    # Prepare the indices
-    if args.subset_size is not None:
-        indices = np.random.RandomState(123).choice(len(dataset), args.subset_size, replace=False)
-        print(f"Only generating predictions a randomly chosen subset of size {args.subset_size} videos of the dataset.")
-        dataset = torch.utils.data.Subset(dataset, indices)
-    print(f"Dataset size (after subsampling) = {len(dataset)}")
-    # Prepare the dataloader
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+    if args.T is None:
+        args.T = dataset[0][0].shape[0]
+        print(f"Using the dataset video length as the T value ({args.T}).")
 
     # Generate the samples
-    main(args, model, diffusion, dataloader, schedule_path=schedule_path)
+    main(args, model, diffusion, dataset, schedule_path=schedule_path)
