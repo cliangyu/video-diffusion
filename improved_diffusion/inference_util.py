@@ -4,6 +4,11 @@ import time
 import lpips as lpips_metric
 
 
+def not_spatial_average(in_tens, keepdim=True):
+    B, C, H, W = in_tens.shape
+    reshaped = in_tens.view(B, C*H*W, 1, 1) if keepdim else in_tens.view(B, C*H*W)
+    return reshaped / (H*W)**0.5
+
 class LpipsEmbedder(lpips_metric.LPIPS):
     def scale_by_proj_weights(self, proj, x):
         conv = proj.model[-1]
@@ -15,8 +20,7 @@ class LpipsEmbedder(lpips_metric.LPIPS):
         feats = {}
         for kk in range(self.L):
             feats[kk] = lpips_metric.normalize_tensor(outs[kk])
-        # res = [lpips_metric.spatial_average(self.lins[kk](feats[kk]), keepdim=True) for kk in range(self.L)]
-        res = [lpips_metric.spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
+        res = [not_spatial_average(self.scale_by_proj_weights(self.lins[kk], feats[kk]), keepdim=True) for kk in range(self.L)]
         return torch.cat(res, dim=1)
 
 
@@ -373,10 +377,69 @@ def get_hierarchy_n_level(n):
         N = n
     return Hierarchy
 
+
 def get_adaptive_hierarchy_n_level(n):
     class AdaptiveHierarchy(AdaptiveHierarchyNLevel):
         N = n
     return AdaptiveHierarchy
+
+
+
+class GoalDirectedHierarchyNLevel(HierarchyNLevel):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def next_indices(self):
+        obs_frame_indices, latent_frame_indices = super().next_indices()
+        if len(self._done_frames) == len(self._obs_frames):  # then it is the first step
+            last_frame = self._video_length-1
+            assert last_frame in latent_frame_indices
+            latent_frame_indices.remove(last_frame)
+            obs_frame_indices.append(last_frame)
+            self._obs_frames.append(self._video_length-1)
+            self._done_frames.add(self._video_length-1)
+        return obs_frame_indices, latent_frame_indices
+
+
+def get_goal_directed_hierarchy_n_level(n):
+    class GoalDirectedHierarchy(GoalDirectedHierarchyNLevel):
+        N = n
+    return GoalDirectedHierarchy
+
+
+class GoalDirectedAutoreg(InferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._obs_frames.append(self._video_length-1)
+        self._done_frames.add(self._video_length-1)
+
+    def next_indices(self):
+        obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
+        first_idx = obs_frame_indices[-2] + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length-1)))
+        return obs_frame_indices, latent_frame_indices
+
+
+class GoalDirectedMixed(InferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._obs_frames.append(self._video_length-1)
+        self._done_frames.add(self._video_length-1)
+
+    def next_indices(self):
+        n_to_condition_on = self._max_frames - self._step_size
+        n_autoreg_frames = n_to_condition_on // 2
+        frames_to_condition_on = set(sorted(self._done_frames)[-n_autoreg_frames:])
+        reversed_obs_frames = sorted(self._obs_frames)[::-1]
+        for i in reversed_obs_frames:
+            frames_to_condition_on.add(i)
+            if len(frames_to_condition_on) == n_to_condition_on:
+                break
+        obs_frame_indices = sorted(frames_to_condition_on)
+        first_idx = sorted(self._done_frames)[-2] + 1
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
+        return obs_frame_indices, latent_frame_indices
 
 inference_strategies = {
     'autoreg': Autoregressive,
@@ -391,4 +454,7 @@ inference_strategies = {
     'adaptive-autoreg': AdaptiveAutoregressive,
     'adaptive-hierarchy-2': get_adaptive_hierarchy_n_level(2),
     'adaptive-hierarchy-3': get_adaptive_hierarchy_n_level(3),
+    'goal-directed-autoreg': GoalDirectedAutoreg,
+    'goal-directed-mixed': GoalDirectedMixed,
+    'goal-directed-hierarchy-2': get_goal_directed_hierarchy_n_level(2),
 }
