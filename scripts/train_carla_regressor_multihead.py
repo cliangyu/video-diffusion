@@ -67,18 +67,37 @@ class MultiHeadEfficientnet_b7(nn.Module):
         super(MultiHeadEfficientnet_b7, self).__init__()
         self.efficientnet_b7 = torchvision.models.efficientnet_b7(pretrained=True)
         self.efficientnet_b7.classifier = nn.Identity()
-        self.classifier = last_layer(2560, 100)
         # one for each cell
         self.regressors = nn.ModuleList([last_layer(2560, 2) for i in range(100)])
 
     def forward(self, inputs, cells):
         emb = self.efficientnet_b7(inputs)
-        classes = self.classifier(emb)
         coords = []
         for idx, cell in enumerate(cells):
             coords.append(self.regressors[cell](emb[idx]))
         coords = torch.stack(coords)
-        return coords, classes
+        return coords
+
+
+
+class MultiHeadResNet152(nn.Module):
+    def __init__(self):
+        super(MultiHeadResNet152, self).__init__()
+        self.resnet = torchvision.models.resnet152(pretrained=True)
+        in_features = self.resnet.fc.in_features
+        self.resnet.fc = nn.Identity()
+        # one for each cell
+        self.regressors = nn.ModuleList([nn.Linear(in_features, 2) for i in range(100)])
+
+    def forward(self, inputs, cells):
+        emb = self.resnet(inputs)
+        coords = []
+        for idx, cell in enumerate(cells):
+            coords.append(self.regressors[cell](emb[idx]))
+        coords = torch.stack(coords)
+        return coords
+
+
 
 class CARLADataset(torch.utils.data.Dataset):
     def __init__(self, root, transforms=None):
@@ -172,7 +191,12 @@ def init(config):
     # ------- set up model ----------
     # ===============================
 
-    model_conv = MultiHeadEfficientnet_b7()
+    if args.model == 'efficientnet_b7':
+        model_conv = MultiHeadEfficientnet_b7()
+    elif args.model == 'resnet152':
+        model_conv = MultiHeadResNet152()
+    else:
+        raise ValueError('Unknown model')
     args.model = model_conv.to(args.device)
 
 
@@ -186,8 +210,7 @@ def train(args):
     dataloaders = args.dataloaders
     device      = args.device
 
-    criterion            = nn.MSELoss()
-    classifier_criterion = nn.CrossEntropyLoss()
+    criterion   = nn.MSELoss()
 
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
     scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1) # Decay LR by a factor of 0.1 every 7 epochs
@@ -204,8 +227,6 @@ def train(args):
                 model.eval()   # Set model to evaluate mode
 
             running_loss = 0.0
-            running_classification_loss = 0.0
-            running_regression_loss = 0.0
 
             # Iterate over data.
             # import ipdb; ipdb.set_trace()
@@ -220,10 +241,8 @@ def train(args):
                 # forward
                 # track history if only in train
                 with torch.set_grad_enabled(phase == 'train'):
-                    pred, classes = model(inputs, cells)
-                    reg_loss  = criterion(pred, coords)
-                    class_loss = classifier_criterion(classes, cells.flatten())
-                    loss = reg_loss + class_loss
+                    pred = model(inputs, cells)
+                    loss = criterion(pred, coords)
 
                     # backward + optimize only if in training phase
                     if phase == 'train':
@@ -232,20 +251,12 @@ def train(args):
 
                 # statistics
                 running_loss += loss.item() * inputs.size(0)
-                running_classification_loss += reg_loss.item() * inputs.size(0)
-                running_regression_loss += class_loss.item() * inputs.size(0)
-
             if phase == 'train':
                 scheduler.step()
 
             epoch_loss = running_loss / args.dataset_sizes[phase]
-            epoch_classification_loss = running_classification_loss / args.dataset_sizes[phase]
-            epoch_regression_loss = running_regression_loss / args.dataset_sizes[phase]
 
-            losses[f"{phase}_total_loss"] = epoch_loss
-            losses[f"{phase}_regression_loss"] = epoch_classification_loss
-            losses[f"{phase}_classification_loss"] = epoch_regression_loss
-
+            losses[f"{phase}"] = epoch_loss
             # deep copy the model
             if phase == 'test' and epoch_loss < best_loss:
                 best_loss = epoch_loss
