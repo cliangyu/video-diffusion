@@ -14,7 +14,7 @@ import pickle
 import time
 
 from improved_diffusion import dist_util, logger
-from improved_diffusion.image_datasets import load_data
+from improved_diffusion.image_datasets import load_data, default_T_dict
 from improved_diffusion.script_util import (
     video_model_and_diffusion_defaults,
     create_video_model_and_diffusion,
@@ -200,6 +200,8 @@ if __name__ == "__main__":
     print(f"Saving samples to {args.eval_dir / 'elbos'}")
 
     # Load the test set
+    if args.T is None:
+        args.T = default_T_dict[model_args.dataset]
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset, T=args.T)
     args.test_set_size = len(dataset)
     print(f"Dataset size = {args.test_set_size}")
