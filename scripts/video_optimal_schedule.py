@@ -173,7 +173,7 @@ def update_schedule_on_disk(schedule_path, schedule, force=True):
         # Re-load the test schedule, in case it was modified by another process.
         saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
         for k,v in schedule.items():
-            if not force:
+            if force:
                 assert k not in saved_schedule, f"Found {k} in the saved schedule!"
             saved_schedule[k] = v
         torch.save(saved_schedule, schedule_path)
