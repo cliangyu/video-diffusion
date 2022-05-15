@@ -301,6 +301,13 @@ if __name__ == "__main__":
     args.eval_dir.mkdir(parents=True, exist_ok=True)
     schedule_path = args.eval_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
+    
+    # Load the test set
+    dataset = get_train_dataset(dataset_name=model_args.dataset)
+    print(f"Dataset size = {len(dataset)}")
+    if args.T is None:
+        args.T = dataset[0][0].shape[0]
+        print(f"Using the dataset video length as the T value ({args.T}).")
 
     if args.submit:
         # Figure out which steps are remaining
@@ -311,13 +318,6 @@ if __name__ == "__main__":
         remaining_steps = [step for step in range(num_steps) if step not in saved_schedule]
         submit(remaining_steps, time="3:00:00", max_slurm_array=args.max_slurm_array)
         quit()
-
-    # Load the test set
-    dataset = get_train_dataset(dataset_name=model_args.dataset)
-    print(f"Dataset size = {len(dataset)}")
-    if args.T is None:
-        args.T = dataset[0][0].shape[0]
-        print(f"Using the dataset video length as the T value ({args.T}).")
 
     # Generate the samples
     main(args, model, diffusion, dataset, schedule_path=schedule_path)
