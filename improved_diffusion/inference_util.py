@@ -49,8 +49,9 @@ class InferenceStrategyBase:
         print(print_str)
         self._video_length = video_length
         self._max_frames = max_frames
-        self._done_frames = set(range(num_obs))
-        self._obs_frames = list(range(num_obs))
+        self._num_obs = num_obs
+        self._done_frames = set(range(self._num_obs))
+        self._obs_frames = list(range(self._num_obs))
         self._step_size = step_size
         self.optimal_schedule = None if optimal_schedule_path is None else torch.load(optimal_schedule_path)
         self._current_step = 0 # Counts the number of steps.
@@ -441,6 +442,75 @@ class GoalDirectedMixed(InferenceStrategyBase):
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
         return obs_frame_indices, latent_frame_indices
 
+
+class GoogleFS4(InferenceStrategyBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert self._max_frames == 16, f"For GoogleFS4 strategy, max_frames must be 16, but got {self._max_frames}"
+
+    def next_indices(self):
+        # Observe 8 frames every 4th frame, ending at the latest "done frame".
+        obs_frame_indices = max(self._done_frames) - np.arange(0, (self._max_frames - self._step_size)) * 4
+        obs_frame_indices = sorted(list(obs_frame_indices))
+        first_idx = max(obs_frame_indices) + 4
+        latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size * 4, self._video_length), 4))
+        # If number of total frames in the batch is less than max_frames, add the more
+        # observed frames to reach max_frames or there is no more frames left to observe.
+        while len(obs_frame_indices) + len(latent_frame_indices) < self._max_frames or min(obs_frame_indices) // 4 == 0:
+            obs_frame_indices = [min(obs_frame_indices) - 4] + obs_frame_indices
+        return obs_frame_indices, latent_frame_indices
+
+    def is_done(self):
+        return self._video_length - max(self._done_frames) <= 4
+
+
+class GoogleFS1(InferenceStrategyBase):
+    def __init__(self, done_frames, *args, **kwargs):
+        # done_frames come from an earlier GoogleFS4 model.
+        super().__init__(*args, **kwargs)
+        assert self._max_frames == 9, "For GoogleFS1, max_frames should be 9."
+        assert self._step_size == 6, "For GoogleFS1, step_size should be 6, meaning that 6 frames will be generated in each inference step."
+        done_frames = sorted(list(done_frames))
+        fs4_frames = np.array(done_frames[done_frames.index(self._num_obs - 1):])
+        assert np.all(fs4_frames % 4 == fs4_frames[0] % 4), f"done_frames should come from a GoogleFS4 model and should only include frames that, starting from the last observed frame, are 4 frames apart. Received {done_frames}"
+        assert max(done_frames) + 4 >= self._video_length, f"done_frames should come from a GoogleFS4 model and should cover the entire video. But the last done_frame is {max(done_frames)}"
+        self._done_frames = set(done_frames)
+        self._obs_frames = list(self._done_frames)
+
+    def next_indices(self):
+        # Start from first_idx = self._num_obs + self._current_step * 8; observe first_idx, first_idx + 4, and first_idx + 8; predict everything in between.
+        first_idx = self._num_obs - 1 + self._current_step * 8
+        obs_frame_indices = list(range(first_idx, min(first_idx + 9, self._video_length), 4))
+        latent_frame_indices = list(range(obs_frame_indices[0] + 1, min(obs_frame_indices[0] + 8, self._video_length)))
+        if len(obs_frame_indices) >= 2:
+            latent_frame_indices.remove(obs_frame_indices[1])
+        for idx in obs_frame_indices:
+            assert idx not in latent_frame_indices
+        assert len(obs_frame_indices) + len(latent_frame_indices) == 9, "This is not implemented for cases where there is frames left over."
+        return obs_frame_indices, latent_frame_indices
+
+
+class Google(InferenceStrategyBase):
+    def __init__(self, video_length, num_obs, **kwargs):
+        if len(kwargs) > 0:
+            print(f"The following arguments are ignored: {list(kwargs.keys())}")
+        super().__init__(video_length=video_length, num_obs=num_obs,
+                         max_frames=16, step_size=8)
+        self.base_schedule = GoogleFS4(
+            video_length=self._video_length, num_obs=self._num_obs,
+            max_frames=self._max_frames, step_size=self._step_size)
+        self._active_iterator = "fs4"
+
+    def next_indices(self):
+        if self._active_iterator == "fs4" and self.base_schedule.is_done():
+            self.base_schedule = GoogleFS1(
+                video_length=self._video_length, num_obs=self._num_obs,
+                max_frames=9, step_size=6,
+                done_frames=self.base_schedule._done_frames)
+            self._active_iterator = "fs1"
+        return next(self.base_schedule)
+
+
 inference_strategies = {
     'autoreg': Autoregressive,
     'independent': Independent,
@@ -457,4 +527,5 @@ inference_strategies = {
     'goal-directed-autoreg': GoalDirectedAutoreg,
     'goal-directed-mixed': GoalDirectedMixed,
     'goal-directed-hierarchy-2': get_goal_directed_hierarchy_n_level(2),
+    'google': Google,
 }
