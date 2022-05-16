@@ -146,7 +146,7 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if getattr(args, "optimality", None) is None else args.eval_dir / "optimal_schedule.pt"
     if 'adaptive' in args.inference_mode:
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
         dataset = globals()[f"get_{args.dataset_partition}_dataset"](dataset_name=dataset_name, T=args.T)
@@ -187,7 +187,7 @@ def visualise(args):
         frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}"
-    if args.optimality is not None:
+    if getattr(args, "optimality", None) is not None:
         path += "_optimal-" + args.optimality
     path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if 'adaptive' in args.inference_mode:
