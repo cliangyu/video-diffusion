@@ -191,6 +191,11 @@ if __name__ == "__main__":
         model = model.to(args.device)
         model.eval()
         models[model_name], diffusions[model_name] = model, diffusion
+    # Assertions on model arguments
+    assert model_args_dict["fs1"].dataset == model_args_dict["fs4"].dataset, f"Both models shoould be trained on the same dataset. Got {model_args_dict['fs1'].dataset} and {model_args_dict['fs4'].dataset}."
+    assert model_args_dict["fs1"].mask_distribution == "differently-spaced-groups-no-marg", f"Unexpected mask distribution for the fs1 model: {model_args_dict['fs1'].mask_distribution}"
+    assert model_args_dict["fs4"].mask_distribution == "linspace-0-60-16", f"Unexpected mask distribution for the fs4 model: {model_args_dict['fs4'].mask_distribution}"
+
     # Load the dataset
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=model_args.dataset, T=args.T)
     print(f"Dataset size = {len(dataset)}")
