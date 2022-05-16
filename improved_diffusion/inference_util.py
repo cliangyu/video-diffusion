@@ -552,13 +552,15 @@ class Google(InferenceStrategyBase):
 
 class LikeGoogle(InferenceStrategyBase):
     def next_indices(self):
-        frames_divisible_by_4 = list(range(len(self._obs_frames)-1, self._video_length, 4))
+        frames_divisible_by_4 = list(range((len(self._obs_frames)-1)%4, self._video_length, 4))
         for_frameskip_4_model_to_do = [i for i in frames_divisible_by_4 if i not in self._done_frames]
         if len(for_frameskip_4_model_to_do) > 0:
             # do frameskip 4 thing
             indices_to_sample = sorted(for_frameskip_4_model_to_do)[:self._step_size]
             n_to_condition_on = self._max_frames - len(indices_to_sample)
+            print('n_to_condition_on', n_to_condition_on)
             indices_to_condition_on = sorted([i for i in frames_divisible_by_4 if i in self._done_frames])[-n_to_condition_on:]
+            print('indices_to_condition_on', indices_to_condition_on)
             return indices_to_condition_on, indices_to_sample
 
         first_idx_to_sample = [i for i in range(self._video_length) if i not in self._done_frames][0]
