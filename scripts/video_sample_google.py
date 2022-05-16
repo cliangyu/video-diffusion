@@ -172,6 +172,7 @@ if __name__ == "__main__":
     # Load the checkpoints (state dictionary and config)
     models = {}
     diffusions = {}
+    model_args_dict = {}
     for model_name in ["fs1", "fs4"]:
         data = dist_util.load_state_dict(getattr(args, f"{model_name}_path"), map_location="cpu")
         state_dict = data["state_dict"]
@@ -179,6 +180,7 @@ if __name__ == "__main__":
         model_args.update({"use_ddim": args.use_ddim,
                            "timestep_respacing": args.timestep_respacing})
         model_args = Namespace(**model_args)
+        model_args_dict[model_name] = model_args
         # Load the models
         model, diffusion = create_video_model_and_diffusion(
             **args_to_dict(model_args, video_model_and_diffusion_defaults().keys())
@@ -216,12 +218,14 @@ if __name__ == "__main__":
     print(f"Saving samples to {args.eval_dir / 'samples'}")
 
     # Store model configs in a JSON file (only save the config of one of the models)
-    json_path = args.eval_dir / "model_config.json"
-    if not json_path.exists():
-        with test_util.Protect(json_path): # avoids race conditions
-            with open(json_path, "w") as f:
-                json.dump(vars(model_args), f, indent=4)
-        print(f"Saved model config at {json_path}")
+    for model_name in ["fs1", "fs4"]:
+        json_path = args.eval_dir / ("model_config.json" if model_name == "fs4" else "model_config_fs1.json")
+        model_args = model_args_dict[model_name]
+        if not json_path.exists():
+            with test_util.Protect(json_path): # avoids race conditions
+                with open(json_path, "w") as f:
+                    json.dump(vars(model_args), f, indent=4)
+            print(f"Saved model config at {json_path}")
 
     # Generate the samples
     main(args, models, diffusions, dataloader, dataset_indices=args.indices)
