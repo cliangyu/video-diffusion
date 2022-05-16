@@ -163,8 +163,6 @@ def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
     return {"fvd": fvd}
 
 
-
-
 def compute_metrics_lazy(data_fetch, T, num_samples, C=3):
     T = T - data_fetch.obs_length
     num_videos = len(data_fetch)
