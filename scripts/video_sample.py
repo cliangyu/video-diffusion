@@ -16,7 +16,7 @@ from improved_diffusion.script_util import (
     args_to_dict,
 )
 from improved_diffusion import dist_util
-from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset, get_variable_length_dataset
 from improved_diffusion.script_util import str2bool
 from improved_diffusion import inference_util
 from improved_diffusion import test_util
@@ -225,7 +225,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
-    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test", "variable_length"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
     parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())

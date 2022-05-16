@@ -157,9 +157,11 @@ class AdaptiveAutoregressive(AdaptiveInferenceStrategyBase):
         super().__init__(*args, **kwargs)
 
     def next_indices(self):
+        if len(self._done_frames) == 0:
+            return [[]]*len(self.videos), list(range(self._max_frames))
         first_idx = max(self._done_frames) + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
-        possible_obs_indices = sorted(self._done_frames)
+        possible_obs_indices = sorted(self._done_frames)[::-1]
         n_obs = self._max_frames - self._step_size
         obs_frame_indices = self.select_obs_indices(possible_obs_indices, n_obs)
         return obs_frame_indices, latent_frame_indices
@@ -170,6 +172,8 @@ class Autoregressive(InferenceStrategyBase):
         super().__init__(*args, **kwargs)
 
     def next_indices(self):
+        if len(self._done_frames) == 0:
+            return [], list(range(self._max_frames))
         obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
         first_idx = obs_frame_indices[-1] + 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length)))
@@ -244,6 +248,11 @@ class HierarchyNLevel(InferenceStrategyBase):
         return int(sample_every_on_level_1 ** ((self.N-self.current_level)/(self.N-1)))
 
     def next_indices(self):
+        if len(self._done_frames) == 0:
+            self.current_level = 1
+            self.last_sampled_idx = self._video_length - 1
+            return [], list(int(i) for i in np.linspace(0, self._video_length-1, self._max_frames))
+
         if len(self._done_frames) == len(self._obs_frames):
             self.current_level = 1
             self.last_sampled_idx = max(self._obs_frames)
@@ -307,6 +316,11 @@ class AdaptiveHierarchyNLevel(AdaptiveInferenceStrategyBase, HierarchyNLevel):
         """
         Certainly not mainly copy-pasted from HierarchyNLevel...
         """
+        if len(self._done_frames) == 0:
+            self.current_level = 1
+            self.last_sampled_idx = self._video_length - 1
+            return [], list(int(i) for i in np.linspace(0, self._video_length-1, self._max_frames))
+
         if len(self._done_frames) == len(self._obs_frames):
             self.current_level = 1
             self.last_sampled_idx = max(self._obs_frames)
@@ -422,6 +436,31 @@ class GoalDirectedAutoreg(InferenceStrategyBase):
         return obs_frame_indices, latent_frame_indices
 
 
+class BabyCondHoEtAlForVis(InferenceStrategyBase):
+    def __iter__(self):
+        yield [3, 5, 7, 9], [11, 13, 15]
+        yield [9, 11, 13, 15], [17, 19, 21]
+        yield [15, 17, 19, 21], [23, 25, 27]
+        yield [9, 11, 13, 15], [10, 12, 14]
+        yield [15, 17, 19, 21], [16, 18, 20]
+        yield [21, 23, 25, 27], [22, 24, 26]
+        yield [23, 24, 25, 26, 27], [28, 29]
+
+
+class HoEtAlForVis(InferenceStrategyBase):
+    def next_indices(self):
+        if len(self._done_frames) == 0:
+            return [], [int(i) for i in np.linspace(0, 60, 16) if i < self._video_length]
+        start = min(i for i in range(64) if i not in self._done_frames)
+        frames = range(start-1, start+8)
+        obs_frame_indices = [i for i in frames if i in self._done_frames]
+        latent_frame_indices = [i for i in frames if i not in self._done_frames]
+        if 64 in latent_frame_indices:
+            latent_frame_indices.remove(64)
+            obs_frame_indices.append(55)
+        return obs_frame_indices, latent_frame_indices
+
+
 class GoalDirectedMixed(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -527,5 +566,7 @@ inference_strategies = {
     'goal-directed-autoreg': GoalDirectedAutoreg,
     'goal-directed-mixed': GoalDirectedMixed,
     'goal-directed-hierarchy-2': get_goal_directed_hierarchy_n_level(2),
+    'ho-et-al-for-vis': HoEtAlForVis,
+    'baby-cond-ho-et-al-for-vis': BabyCondHoEtAlForVis,
     'google': Google,
 }

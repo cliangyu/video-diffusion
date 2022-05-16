@@ -48,7 +48,8 @@ if __name__ == "__main__":
     parser.add_argument("--samples_dir", type=str, required=True)
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--add_gt", action="store_true")
-    parser.add_argument("--do_n", type=int, default=10)
+    parser.add_argument("--do_n", type=int, default=50)
+    parser.add_argument("--n_seeds", type=int, default=2)
     parser.add_argument("--obs_length", type=int, default=0,
                         help="Number of observed images. If positive, marks the first obs_length frames in output gifs by a red border.")
     args = parser.parse_args()
@@ -66,7 +67,11 @@ if __name__ == "__main__":
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
 
-    for filename in sorted(Path(args.samples_dir).glob("sample_*.npy"))[:args.do_n]:
+    filenames = Path(args.samples_dir).glob("sample_*.npy")
+    #print([str(f).replace('-', '.').split('.') for f in filenames])
+    filenames = [f for f in filenames if int(str(f).replace('-', '.').split('.')[-2]) < args.n_seeds]
+    print(filenames)
+    for filename in sorted(filenames)[:args.do_n]:
         video_name = filename.stem
         data_idx = int(video_name.split("_")[1].split("-")[0])
         gif_path = out_dir / f"{video_name}.gif"
@@ -79,7 +84,8 @@ if __name__ == "__main__":
             mark_as_observed(video[:args.obs_length])
         if args.add_gt:
             gt_drange = [-1, 1]
-            gt_video, _ = dataset[data_idx].numpy()
+            gt_video, _ = dataset[data_idx]
+            gt_video = gt_video.numpy()
             gt_video = (gt_video - gt_drange[0]) / (gt_drange[1] - gt_drange[0])  * 255
             gt_video = gt_video.astype(np.uint8)
             video = np.concatenate([video, gt_video], axis=-2)
