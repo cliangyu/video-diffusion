@@ -387,9 +387,14 @@ class CarlaDataset(MazesDataset):
 class CarlaVariableLengthDataset(CarlaDataset):
     def __init__(self, T):
         path = os.path.join('datasets', 'carla', 'no-traffic-variable-length')
+        print('in variable length dataset __init__')
         self.T = T
-        self.fnames = [Path(p).fname for p in glob.glob(os.path.join(path, 'video_*.pt'))]
+        print(self.T)
+        self.fnames = [Path(p).name for p in glob.glob(os.path.join(path, 'video_*.pt'))]
+        print(os.path.join(path, 'video_*.pt'))
+        print(self.fnames)
         self.path = Path(path)
+        print(self.path)
         self.is_test = False
 
 
