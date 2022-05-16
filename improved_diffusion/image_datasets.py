@@ -129,6 +129,8 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
 
 
 def get_test_dataset(dataset_name, T=None, image_size=None):
+    if dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
     data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
@@ -157,6 +159,8 @@ def get_variable_length_dataset(dataset_name, T):
 
 
 def get_train_dataset(dataset_name, T=None, image_size=None):
+    if dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
     data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
