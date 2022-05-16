@@ -59,6 +59,8 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
+    if 'goal-directed' in mode:
+        samples[:, -1] = batch[:, -1]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
     frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
@@ -281,6 +283,10 @@ if __name__ == "__main__":
     args.eval_dir = args.eval_dir
     (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.eval_dir / 'samples'}")
+
+    if args.T is None:
+        args.T = dataset[0][0].shape[0]
+        print(f"Using the dataset video length as the T value ({args.T}).")
 
     if args.just_visualise:
         visualise(args)
