@@ -151,7 +151,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     return dataset
 
 
-def get_variable_length_dataset(dataset_name, T=T):
+def get_variable_length_dataset(dataset_name, T):
     assert dataset_name == 'carla_no_traffic'
     return CarlaVariableLengthDataset(T)
 
@@ -381,7 +381,7 @@ class CarlaDataset(MazesDataset):
         return len(self.fnames)
 
 class CarlaVariableLengthDataset(CarlaDataset):
-    def __init__(self, T=T):
+    def __init__(self, T):
         path = os.path.join('datasets', 'carla', 'no-traffic-variable-length')
         self.T = T
         self.fnames = [Path(p).fname for p in glob.glob(os.path.join(path, 'video_*.pt'))]
