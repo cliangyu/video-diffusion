@@ -33,7 +33,7 @@ class LazyDataFetch:
         self.obs_length = obs_length
         self.drop_obs = drop_obs
         samples_dir = Path(eval_dir) / "samples"
-        assert samples_dir.exists()
+        assert samples_dir.exists(), f"Samples dir {samples_dir} does not exist."
         filenames = [(x, [int(num) for num in x.stem.split("_")[-1].split("-")]) for x in samples_dir.glob("sample_*.npy")]
         # filenames has the following structure: [(filename, (video_idx, sample_idx))]
         filenames.sort(key=lambda x: x[1][0])
