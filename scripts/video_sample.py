@@ -170,13 +170,36 @@ def visualise(args):
             if index is not None:
                 obs_frame_indices, latent_frame_indices = obs_frame_indices[index], latent_frame_indices[index]
             exist_indices.extend(latent_frame_indices)
-            new_layer = torch.zeros((args.T, 3)).int()
-            new_layer[exist_indices, 0] = 50
-            new_layer[obs_frame_indices, 0] = 255
-            new_layer[latent_frame_indices, 2] = 255
-            vis.append(new_layer)
-            vis.append(new_layer*0)
-        vis = torch.stack(vis)
+            if args.big_visualise:
+                new_layer = torch.zeros((args.T, 3)).int()
+                border_colour = torch.tensor([0, 0, 0]).int()
+                not_sampled_colour = torch.tensor([255, 255, 255]).int()
+                exist_colour = torch.tensor([50, 50, 50]).int()
+                obs_colour = torch.tensor([50, 50, 255]).int()
+                latent_colour = torch.tensor([255, 69, 0]).int()
+                # not_sampled_colour = torch.tensor([255, 255, 255]).int()
+                # exist_colour = torch.tensor([153, 153, 153]).int()
+                # obs_colour = torch.tensor([55, 126, 184]).int()
+                # latent_colour = torch.tensor([255, 127, 0]).int()
+                new_layer = torch.zeros((args.T, 3)).int()
+                new_layer[:, :] = not_sampled_colour
+                new_layer[exist_indices, :] = exist_colour
+                new_layer[obs_frame_indices, :] = obs_colour
+                new_layer[latent_frame_indices, :] = latent_colour
+                scale = 4
+                new_layer = new_layer.repeat_interleave(scale+1, dim=0)
+                new_layer[::(scale+1)] = border_colour
+                new_layer = torch.cat([new_layer, new_layer[:1]], dim=0)
+                vis.extend([new_layer.clone() for _ in range(scale+1)])
+                vis[-1][:] = border_colour
+            else:
+                new_layer = torch.zeros((args.T, 3)).int()
+                new_layer[exist_indices, 0] = 50
+                new_layer[obs_frame_indices, 0] = 255
+                new_layer[latent_frame_indices, 2] = 255
+                vis.append(new_layer)
+                vis.append(new_layer*0)
+        vis = torch.stack([vis[-1], *vis])
         if index is not None:
             path = f"{path}_index-{index}"
         path = f"{path}.png"
@@ -223,6 +246,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
+    parser.add_argument("--big_visualise", action='store_true', help="Make visualisation big.")
     parser.add_argument("--optimality", type=str, default=None,
         choices=["linspace-t", "random-t",
                  "linspace-t-force-nearby", "random-t-force-nearby"],
