@@ -24,6 +24,7 @@ video_data_paths_dict = {
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
     "carla_no_traffic": "datasets/carla/no-traffic",
+    "carla_no_traffic_variable_length": "datasets/carla/no-traffic-variable-length",
 }
 
 default_T_dict = {
@@ -148,6 +149,11 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         raise Exception("no dataset", dataset_name)
     dataset.set_test()
     return dataset
+
+
+def get_variable_length_dataset(dataset_name, T=T):
+    assert dataset_name == 'carla_no_traffic'
+    return CarlaVariableLengthDataset(T)
 
 
 def get_train_dataset(dataset_name, T=None, image_size=None):
@@ -373,6 +379,15 @@ class CarlaDataset(MazesDataset):
 
     def __len__(self):
         return len(self.fnames)
+
+class CarlaVariableLengthDataset(CarlaDataset):
+    def __init__(self, T=T):
+        path = os.path.join('datasets', 'carla', 'no-traffic-variable-length')
+        self.T = T
+        self.fnames = [Path(p).fname for p in glob.glob(os.path.join(path, 'video_*.pt'))]
+        self.path = Path(path)
+        self.is_test = False
+
 
 
 class GQNMazesDataset(BaseDataset):
