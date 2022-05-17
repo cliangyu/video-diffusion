@@ -105,7 +105,7 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
         cnt += len(batch)
 
 def run_bpd_evaluation(model, diffusion, batch, clip_denoised, obs_indices, lat_indices, t_seq=None):
-    max_frames = len(obs_indices[0]) + len(lat_indices[0]) # This assumes that items in obs_indices have the same length. Same for lat_indices.
+    max_frames = max(len(o)+len(l) for o, l in zip(obs_indices, lat_indices))  # len(obs_indices[0]) + len(lat_indices[0]) didn't work for variable length obs/lat indices
     x0 = torch.zeros_like(batch[:, :max_frames].to(dist_util.dev()))
     obs_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
     lat_mask = torch.zeros_like(x0[:, :, :1, :1, :1])
