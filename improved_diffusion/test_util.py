@@ -8,6 +8,7 @@ class Protect(FileLock):
     """
     def __init__(self, path, timeout=2, **kwargs):
         path = Path(path)
+        name = path.name if path.name.startswith(".") else f".{path.name}"
         lock_path = Path(path).parent / f"{path.name}.lock"
         super().__init__(lock_path, timeout=timeout, **kwargs)
 

@@ -24,6 +24,7 @@ video_data_paths_dict = {
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
     "carla_no_traffic": "datasets/carla/no-traffic",
+    "carla_no_traffic_variable_length": "datasets/carla/no-traffic-variable-length",
 }
 
 default_T_dict = {
@@ -128,6 +129,8 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
 
 
 def get_test_dataset(dataset_name, T=None, image_size=None):
+    if dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
     data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
@@ -150,7 +153,14 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     return dataset
 
 
+def get_variable_length_dataset(dataset_name, T):
+    assert dataset_name == 'carla_no_traffic'
+    return CarlaVariableLengthDataset(T)
+
+
 def get_train_dataset(dataset_name, T=None, image_size=None):
+    if dataset_name == "mazes":
+        raise Exception('Deprecated dataset.')
     data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
@@ -373,6 +383,20 @@ class CarlaDataset(MazesDataset):
 
     def __len__(self):
         return len(self.fnames)
+
+class CarlaVariableLengthDataset(CarlaDataset):
+    def __init__(self, T):
+        path = os.path.join('datasets', 'carla', 'no-traffic-variable-length')
+        print('in variable length dataset __init__')
+        self.T = T
+        print(self.T)
+        self.fnames = [Path(p).name for p in glob.glob(os.path.join(path, 'video_*.pt'))]
+        print(os.path.join(path, 'video_*.pt'))
+        print(self.fnames)
+        self.path = Path(path)
+        print(self.path)
+        self.is_test = False
+
 
 
 class GQNMazesDataset(BaseDataset):
