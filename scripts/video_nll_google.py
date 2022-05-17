@@ -37,6 +37,7 @@ def main(args, models, diffusions, dataloader, postfix="", dataset_indices=None)
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
+        print(f"Batch {i}")
         fnames = [args.eval_dir / "elbos" / f"elbo_{dataset_idx_translate(cnt+j)}{postfix}.pkl" for j in range(len(batch))]
         if all([os.path.exists(f) for f in fnames]):
             print('Already exist. Skipping', fnames)
