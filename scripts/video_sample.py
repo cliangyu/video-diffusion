@@ -305,6 +305,10 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
     args.eval_dir = args.eval_dir
+    if args.dataset_partition == "variable_length":
+         args.eval_dir = args.eval_dir / "variable_length"
+         if args.T is None:
+             args.T = {'0': 522, '1': 268}[os.environ["SLURM_ARRAY_TASK_ID"]]
     (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.eval_dir / 'samples'}")
 
