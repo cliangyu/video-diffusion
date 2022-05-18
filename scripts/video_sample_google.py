@@ -156,6 +156,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
+    parser.add_argument("--big_visualise", action='store_true', help="Make visualisation big.")
     args = parser.parse_args()
     assert args.inference_mode == "google"
     args.checkpoint_path = args.fs4_path

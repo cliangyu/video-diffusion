@@ -525,7 +525,8 @@ class GoogleFS1(InferenceStrategyBase):
             latent_frame_indices.remove(obs_frame_indices[1])
         for idx in obs_frame_indices:
             assert idx not in latent_frame_indices
-        assert len(obs_frame_indices) + len(latent_frame_indices) == 9, "This is not implemented for cases where there is frames left over."
+        while len(obs_frame_indices) + len(latent_frame_indices) < 9:
+            obs_frame_indices += [min(min(latent_frame_indices), min(obs_frame_indices)) - 1]
         return obs_frame_indices, latent_frame_indices
 
 
