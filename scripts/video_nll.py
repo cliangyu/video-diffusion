@@ -30,7 +30,7 @@ from video_sample import get_masks, default_model_configs
 mask_distributions = ["differently-spaced-groups"]
 
 
-def get_eval_frame_indices(args, batch=None):
+def get_eval_frame_indices(args, batch=None, optimal_schedule_path=None):
     """
     can get indices by either
     - distribution from inference_utils
@@ -43,6 +43,7 @@ def get_eval_frame_indices(args, batch=None):
         adaptive_kwargs = dict(distance='lpips') if args.adaptive else {}
         frame_indices_iterator = inference_strategies[args.inference_mode](
             video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size,
+            optimal_schedule_path=optimal_schedule_path,
             **adaptive_kwargs
         )
         if args.adaptive:
@@ -73,7 +74,7 @@ def get_eval_frame_indices(args, batch=None):
     return obs_indices, lat_indices
 
 def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
-
+    optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if args.indices is None else args.indices[idx]
     cnt = 0
     for i, (batch, _) in enumerate(dataloader):
@@ -82,7 +83,9 @@ def main(args, model, diffusion, dataloader, postfix="", dataset_indices=None):
             print('Already exist. Skipping', fnames)
             cnt += len(batch)
             continue
-        obs_indices, lat_indices = get_eval_frame_indices(args, batch=batch if args.adaptive else None)
+        obs_indices, lat_indices = get_eval_frame_indices(
+            args, batch=batch if args.adaptive else None,
+            optimal_schedule_path=optimal_schedule_path)
         if not args.adaptive:
             #frame_indices = ([obs_indices[i] for i in args.indices], [lat_indices[i] for i in args.indices],)
             obs_indices = [obs_indices[i] for i in args.indices]
@@ -165,7 +168,6 @@ if __name__ == "__main__":
                  help="Whcih optimality schedule to use for choosing observed frames. The optimal schedule should be generated before via video_optimal_schedule.py. Default is to not use any optimality.")
     args = parser.parse_args()
     args.adaptive = 'adaptive' in args.inference_mode
-    assert args.optimality is None, "Not implemented for ELBO computation."
 
     # Load the checkpoint (state dictionary and config)
     data = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")
