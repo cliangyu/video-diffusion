@@ -41,7 +41,8 @@ def submit(remaining_steps, args):
             extra_args = "--account=rrg-fwood"
         elif args.slurm_cluster == "plai_towers":
             extra_args = "--partition=plai_towers"
-
+    if args.slurm_min_array > 0:
+        remaining_steps = [x for x in remaining_steps if x >= args.slurm_min_array]
     if len(remaining_steps) == 0:
         print("Nothing left to do!")
         return
@@ -266,7 +267,7 @@ def main(args, model, diffusion, dataset, schedule_path, verbose=True):
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
@@ -293,6 +294,7 @@ if __name__ == "__main__":
     parser.add_argument("--submit", action="store_true", help="If given, figures out which steps of the optimal schedule are remaining to be optimized, then submits an array job doing them.")
     parser.add_argument("--slurm_cluster", type=str, choices=["plai", "plai_towers", "cc", "submit-ml"], default=None)
     parser.add_argument("--slurm_max_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
+    parser.add_argument("--slurm_min_array", type=int, default=0, help="Specifies the minimum index allowed to use for SLURM's --array argument.")
     parser.add_argument("--slurm_time_hrs", type=int, default=3)
     parser.add_argument("--slurm_mem", type=str, default="32G")
     args = parser.parse_args()
@@ -330,6 +332,8 @@ if __name__ == "__main__":
     args.eval_dir.mkdir(parents=True, exist_ok=True)
     schedule_path = args.eval_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
+    if args.batch_size is None:
+        args.batch_size = 5 if "carla" in model_args.dataset else 16
 
     # Load the test set
     dataset = get_train_dataset(dataset_name=model_args.dataset)
