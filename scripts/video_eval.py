@@ -237,8 +237,6 @@ if __name__ == "__main__":
             model_config = json.load(f)
             if args.dataset is None:
                 args.dataset = model_config["dataset"]
-            if args.T is None:
-                args.T = model_config["T"]
     if args.batch_size is None:
         if "mazes" in args.dataset:
             args.batch_size = 16

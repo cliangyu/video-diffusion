@@ -60,7 +60,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
     if 'goal-directed' in mode:
-        samples[:, -1] = batch[:, -1]
+        samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
     frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
