@@ -4,7 +4,6 @@ import torch
 import numpy as np
 import PIL
 from PIL import Image
-import cv2
 import imageio
 import argparse
 import os
@@ -161,6 +160,8 @@ def tensor2mp4(tensor, path, drange=[0, 1], random_str=""):
 
 
 def tensor2avi(tensor, path, drange=[0, 1], random_str=""):
+    import cv2
+
     frames = tensor2pil(tensor, drange=drange)
     tmp_path = f"/tmp/tmp_{random_str}.png"
     video = cv2.VideoWriter(str(path), 0, 10, frames[0].size)
