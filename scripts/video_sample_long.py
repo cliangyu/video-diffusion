@@ -117,7 +117,7 @@ if __name__ == "__main__":
     args.step_size = args.max_frames // 2
     args.obs_length = model_args.T // 2
     args.file_length = model_args.T - args.obs_length     # Files are going to have the same number of frames as the model's T
-    assert args.file_length > args.obs_length, f"File length ({args.file_length}) must be greater than observation length ({args.obs_length}). It's due to the limitation of this implementation."
+    assert args.file_length >= args.obs_length, f"File length ({args.file_length}) must be greater than observation length ({args.obs_length}). It's due to the limitation of this implementation."
 
     model_args.max_frames = args.max_frames
     model_args.step_size = args.step_size
