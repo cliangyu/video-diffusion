@@ -60,7 +60,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
     if 'goal-directed' in mode:
-        samples[:, -1] = batch[:, -1]
+        samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
     frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
@@ -305,6 +305,10 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
     args.eval_dir = args.eval_dir
+    if args.dataset_partition == "variable_length":
+         args.eval_dir = args.eval_dir / "variable_length"
+         if args.T is None:
+             args.T = {'0': 522, '1': 268}[os.environ["SLURM_ARRAY_TASK_ID"]]
     (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.eval_dir / 'samples'}")
 

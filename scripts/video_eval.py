@@ -243,8 +243,7 @@ if __name__ == "__main__":
         elif "minerl" in args.dataset:
             args.batch_size = 8
         elif "carla" in args.dataset:
-            raise NotImplementedError("Default batch size for CARLA dataset has not been decided yet.")
-            args.batch_size = None
+            args.batch_size = 4
     # Load dataset
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values

@@ -426,12 +426,15 @@ def get_goal_directed_hierarchy_n_level(n):
 class GoalDirectedAutoreg(InferenceStrategyBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._obs_frames.append(self._video_length-1)
-        self._done_frames.add(self._video_length-1)
+        for i in range(1, 6):
+            self._obs_frames.append(self._video_length-i)
+            self._done_frames.add(self._video_length-i)
 
     def next_indices(self):
         obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
-        first_idx = obs_frame_indices[-2] + 1
+        first_idx = 0 #obs_frame_indices[-2] + 1
+        while first_idx in self._done_frames:
+            first_idx += 1
         latent_frame_indices = list(range(first_idx, min(first_idx + self._step_size, self._video_length-1)))
         return obs_frame_indices, latent_frame_indices
 

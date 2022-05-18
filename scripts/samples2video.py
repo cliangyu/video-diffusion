@@ -1,47 +1,13 @@
 import torch
 import numpy as np
-from argparse import ArgumentParser, Namespace
-import PIL
+from argparse import ArgumentParser
 from tqdm.auto import tqdm
 import os
-import imageio
 from pathlib import Path
 import uuid
 
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_test_dataset, mark_as_observed, tensor2gif, tensor2mp4, tensor2avi
 
-
-def mark_as_observed(images, color=[255, 0, 0]):
-    for i, c in enumerate(color):
-        images[..., i, :, 1:2] = c
-        images[..., i, 1:2, :] = c
-        images[..., i, :, -2:-1] = c
-        images[..., i, -2:-1, :] = c
-
-
-def tensor2pil(tensor, drange=[0,1]):
-    """Given a tensor of shape (Bx)3xwxh with pixel values in drange, returns a PIL image
-       of the tensor. Returns a list of images if the input tensor is a batch.
-    Args:
-        tensor: A tensor of shape (Bx)3xwxh
-        drange (list, optional): Range of pixel values in the input tensor. Defaults to [0,1].
-    """
-    assert tensor.ndim == 3 or tensor.ndim == 4
-    if tensor.ndim == 3:
-        return tensor2pil(tensor.unsqueeze(0), drange=drange)[0]
-    img_batch = tensor.cpu().numpy().transpose([0, 2, 3, 1])
-    img_batch = (img_batch - drange[0]) / (drange[1] - drange[0])  * 255 # img_batch with pixel values in [0, 255]
-    img_batch = img_batch.astype(np.uint8)
-    return [PIL.Image.fromarray(img) for img in img_batch]
-
-def tensor2gif(tensor, path, drange=[0, 1], random_str=""):
-    frames = tensor2pil(tensor, drange=drange)
-    tmp_path = f"/tmp/tmp_{random_str}.png"
-    res = []
-    for frame in frames:
-        frame.save(tmp_path)
-        res.append(imageio.imread(tmp_path))
-    imageio.mimsave(path, res)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -52,9 +18,8 @@ if __name__ == "__main__":
     parser.add_argument("--n_seeds", type=int, default=2)
     parser.add_argument("--obs_length", type=int, default=0,
                         help="Number of observed images. If positive, marks the first obs_length frames in output gifs by a red border.")
+    parser.add_argument("--format", type=str, default="gif", choices=["gif", "mp4", "avi"])
     args = parser.parse_args()
-
-    drange = [0, 255]
 
     if args.add_gt:
         assert args.dataset is not None
@@ -74,8 +39,8 @@ if __name__ == "__main__":
     for filename in sorted(filenames)[:args.do_n]:
         video_name = filename.stem
         data_idx = int(video_name.split("_")[1].split("-")[0])
-        gif_path = out_dir / f"{video_name}.gif"
-        if gif_path.exists():
+        out_path = out_dir / f"{video_name}.{args.format}"
+        if out_path.exists():
             print(f"Skipping {video_name}. Already exists.")
             continue
         print(f"Processing {video_name}")
@@ -93,4 +58,12 @@ if __name__ == "__main__":
         final_frame = np.zeros_like(video[:1])
         final_frame[..., ::2, 1::2] = 255  # checkerboard pattern to mark the end
         video = np.concatenate([video, final_frame], axis=0)
-        tensor2gif(torch.tensor(video), gif_path, drange=drange, random_str=random_str)
+        if args.format == "gif":
+            tensor2gif(torch.tensor(video), out_path, drange=[0, 255], random_str=random_str)
+        elif args.format == "mp4":
+            tensor2mp4(torch.tensor(video), out_path, drange=[0, 255], random_str=random_str)
+        elif args.format == "avi":
+            tensor2avi(torch.tensor(video), out_path, drange=[0, 255], random_str=random_str)
+        else:
+            raise ValueError(f"Unknown format {args.format}")
+        print(f"Saved to {out_path}")
