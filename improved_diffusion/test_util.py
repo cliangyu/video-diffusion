@@ -1,6 +1,15 @@
 from filelock import FileLock
 from pathlib import Path
 import torch
+import argparse
+
+
+from improved_diffusion import dist_util
+from improved_diffusion.script_util import (
+    video_model_and_diffusion_defaults,
+    create_video_model_and_diffusion,
+    args_to_dict,
+)
 
 class Protect(FileLock):
     """ Given a file path, this class will create a lock file and prevent race conditions
@@ -11,6 +20,35 @@ class Protect(FileLock):
         name = path.name if path.name.startswith(".") else f".{path.name}"
         lock_path = Path(path).parent / f"{path.name}.lock"
         super().__init__(lock_path, timeout=timeout, **kwargs)
+
+
+def load_checkpoint(checkpoint_path, device, use_ddim=False, timestep_respacing=""):
+    # A dictionary of default model configs for the parameters newly introduced.
+    # It enables backward compatibility
+    default_model_configs = {"enforce_position_invariance": False,
+                            "cond_emb_type": "channel"}
+
+    # Load the checkpoint (state dictionary and config)
+    data = dist_util.load_state_dict(checkpoint_path, map_location="cpu")
+    state_dict = data["state_dict"]
+    model_args = data["config"]
+    model_args.update({"use_ddim": use_ddim,
+                       "timestep_respacing": timestep_respacing})
+    # Update model parameters, if needed, to enable backward compatibility
+    for k, v in default_model_configs.items():
+        if k not in model_args:
+            model_args[k] = v
+    model_args = argparse.Namespace(**model_args)
+    # Load the model
+    model, diffusion = create_video_model_and_diffusion(
+        **args_to_dict(model_args, video_model_and_diffusion_defaults().keys())
+    )
+    model.load_state_dict(
+            state_dict
+        )
+    model = model.to(device)
+    model.eval()
+    return (model, diffusion), model_args
 
 
 def get_model_results_path(args):
