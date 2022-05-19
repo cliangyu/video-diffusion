@@ -6,7 +6,8 @@ import os
 from pathlib import Path
 import uuid
 
-from improved_diffusion.image_datasets import get_test_dataset, mark_as_observed, tensor2gif, tensor2mp4, tensor2avi
+from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.test_util import mark_as_observed, tensor2gif, tensor2mp4, tensor2avi
 
 
 if __name__ == "__main__":
