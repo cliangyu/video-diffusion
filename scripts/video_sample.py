@@ -210,6 +210,8 @@ def visualise(args):
         frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}"
+    if args.obs_length == 0:
+        path += "_uncond"
     if getattr(args, "optimality", None) is not None:
         path += "_optimal-" + args.optimality
     path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
