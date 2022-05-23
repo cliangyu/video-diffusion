@@ -36,6 +36,8 @@ with timeout(seconds=1800):
     parser.add_argument('save_dir', type=str, help="Where to save the generated videos/coords.")
     parser.add_argument('--port', type=int, default=5555, help="5555 is the server with other cars. Currently there are no other servers")
     parser.add_argument('--town', type=str, default='Town01')
+    parser.add_argument('--n_traffic', type=int, default=0)
+    parser.add_argument('--n_pedestrian', type=int, default=0)
     args = parser.parse_args()
 
     sensors_dict = {
@@ -59,7 +61,7 @@ with timeout(seconds=1800):
     server_ip = "simulate.inverted.ai"
     config.zmq_server_address = f"{server_ip}:{args.port}"
     env = IAIEnv(config)
-    world_parameters = dict(carlatown=args.town, traffic_count=0, pedestrian_count=0, weather='Random')
+    world_parameters = dict(carlatown=args.town, traffic_count=args.n_traffic, pedestrian_count=args.n_pedestrian, weather='Random')
 
     obs = env.set_scenario('egodriving', world_parameters=world_parameters, sensors=sensors_dict)
 
