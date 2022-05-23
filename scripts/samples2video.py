@@ -68,8 +68,9 @@ if __name__ == "__main__":
     random_str = uuid.uuid4()
 
     filenames = Path(args.samples_dir).glob("sample_*.npy")
+    filenames = list(filenames) + list(Path(args.samples_dir).glob("video_*.npy"))
     #print([str(f).replace('-', '.').split('.') for f in filenames])
-    filenames = [f for f in filenames if int(str(f).replace('-', '.').split('.')[-2]) < args.n_seeds]
+    #filenames = [f for f in filenames if int(str(f).replace('-', '.').split('.')[-2]) < args.n_seeds]
     print(filenames)
     for filename in sorted(filenames)[:args.do_n]:
         video_name = filename.stem
