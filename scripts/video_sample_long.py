@@ -53,16 +53,31 @@ def infer_step(model, diffusion, video, args):
     samples = torch.zeros(1, args.obs_length + args.file_length, C, H, W)
     samples[:, :args.obs_length] = video[:args.obs_length]
 
-    inference_strategy = inference_util.inference_strategies[args.inference_mode](
+    adaptive_kwargs = dict(distance='lpips') if 'adaptive' in args.inference_mode else {}
+    frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
         video_length=samples.shape[1], num_obs=T,
-        max_frames=args.max_frames, step_size=args.step_size
+        max_frames=args.max_frames, step_size=args.step_size,
+        **adaptive_kwargs
     )
-    for obs_indices, lat_indices in inference_strategy:
-        x0 = torch.cat([samples[:, obs_indices], samples[:, lat_indices]], dim=1).clone()
-        frame_indices = torch.cat([torch.tensor(obs_indices), torch.tensor(lat_indices)], dim=0).repeat((1, 1))
-        # Prepare masks
-        obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_indices))
-        n_latent = len(lat_indices)
+
+    while True:
+        if 'adaptive' in args.inference_mode:
+            frame_indices_iterator.set_videos(samples.to(args.device))
+        try:
+            obs_indices, lat_indices = next(frame_indices_iterator)
+        except StopIteration:
+            break
+        if 'adaptive' in args.inference_mode:
+            frame_indices = torch.cat([torch.tensor(obs_indices), torch.tensor(lat_indices)], dim=1).long()
+            x0 = torch.stack([samples[i, fi] for i, fi in enumerate(frame_indices)], dim=0).clone()
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_indices[0]))
+            n_latent = len(lat_indices[0])
+        else:
+            x0 = torch.cat([samples[:, obs_indices], samples[:, lat_indices]], dim=1).clone()
+            frame_indices = torch.cat([torch.tensor(obs_indices), torch.tensor(lat_indices)], dim=0).repeat((1, 1))
+            # Prepare masks
+            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_indices))
+            n_latent = len(lat_indices)
         # Move tensors to the correct device
         [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(args.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
         print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
@@ -94,10 +109,11 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--starting_video", type=str, default=None, help="Path to the video file to start generation with. It should be a .npy file. If None, starts from the latest sampled video stored at the output direcotyr")
     parser.add_argument("--length", type=int, required=True)
-    parser.add_argument("--inference_mode", type=str, required=True, choices=["autoreg", "hierarchy-2"])
+    parser.add_argument("--inference_mode", type=str, required=True, choices=["autoreg", "hierarchy-2", "mixed-autoreg-independent", "adaptive-hierarchy-2"])
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("-o", "--out", default=None)
+    parser.add_argument("--unconditional", action="store_true")
     # Inference arguments
     parser.add_argument("--use_ddim", type=str2bool, default=False)
     parser.add_argument("--timestep_respacing", type=str, default="")
@@ -132,13 +148,18 @@ if __name__ == "__main__":
         # -> Make sure --starting_video argument is valid.
         # -> copy the starting video as the first video in the output directory.
         # -> save the model config in the directory.
-        assert args.starting_video is not None, "--starting_video argument is required when the output directory is empty."
-        args.starting_video = Path(args.starting_video)
-        assert args.starting_video.is_file(), f"Starting video {args.starting_video} does not exist."
+        if not args.unconditional:
+            assert args.starting_video is not None, "--starting_video argument is required when the output directory is empty."
+            args.starting_video = Path(args.starting_video)
+            assert args.starting_video.is_file(), f"Starting video {args.starting_video} does not exist."
+            shutil.copyfile(args.starting_video, args.out / "video_0.npy")
+        else:
+            assert args.starting_video is None, f"--starting_video argument should be None for unconditional sampling (got {args.starting_video})."
+            cond_obs_length = args.obs_length
+            args.obs_length = 0
         with open(config_path, "w") as f:
             json.dump(vars(model_args), f, indent=4)
         print(f"Saved model config at {config_path}")
-        shutil.copyfile(args.starting_video, args.out / "video_0.npy")
         video_index_offset = 1
     else:
         # Make sure the --starting_video argument is not given.
@@ -157,9 +178,13 @@ if __name__ == "__main__":
     print(f"Each generated file will have {args.file_length} frames and is conditioned on the past {args.obs_length} frames.")
     print(f"max_frames = {args.max_frames} and step_size = {args.step_size}")
 
-    # Load the video to start generation with.
-    video = np.load(args.starting_video)
-    assert len(video) >= args.obs_length # Make sure the video is long enough to be able to condition on its last frames.
+    if not args.unconditional:
+        # Load the video to start generation with.
+        video = np.load(args.starting_video)
+        assert len(video) >= args.obs_length # Make sure the video is long enough to be able to condition on its last frames.
+    else:
+        res = 128 if "carla" in model_args.dataset else 64
+        video = np.zeros((0, 3, res, res), dtype=np.uint8)
 
     # Generate the video
     for cnt, frame_idx in enumerate(range(0, args.length, args.file_length)):
@@ -169,3 +194,5 @@ if __name__ == "__main__":
         np.save(path, new_video)
         print(f"Saved a video part (with {len(new_video)} frames) at {path}")
         video = np.concatenate([video, new_video], axis=0)[-args.obs_length:] # Drop anything farther than obs_length frames since we are not conditioning on them.
+        if args.unconditional and args.obs_length == 0:
+            args.obs_length = cond_obs_length

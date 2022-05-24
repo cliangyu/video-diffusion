@@ -60,15 +60,23 @@ class InferenceStrategyBase:
         # Check if the video is fully generated.
         if self.is_done():
             raise StopIteration
-        # Get the next indices from the function overloaded by each inference strategy.
-        obs_frame_indices, latent_frame_indices = self.next_indices()
-        # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
-        if self.optimal_schedule is not None:
-            if self._current_step not in self.optimal_schedule:
-                print(f"WARNING: optimal observations for prediction step #{self._current_step} was not found in the saved optimal schedule.")
-                obs_frame_indices = []
-            else:
-                obs_frame_indices = self.optimal_schedule[self._current_step]
+        unconditional = False
+        if self._num_obs == 0 and self._current_step == 0:
+            # Handles unconditional sampling by sampling a batch of self._max_frame latent frames in the first
+            # step, then proceeding as usual in the next steps.
+            obs_frame_indices = []
+            latent_frame_indices = list(range(self._max_frames))
+            unconditional = True
+        else:
+            # Get the next indices from the function overloaded by each inference strategy.
+            obs_frame_indices, latent_frame_indices = self.next_indices()
+            # If using the optimal schedule, overwrite the observed frames with the optimal schedule.
+            if self.optimal_schedule is not None:
+                if self._current_step not in self.optimal_schedule:
+                    print(f"WARNING: optimal observations for prediction step #{self._current_step} was not found in the saved optimal schedule.")
+                    obs_frame_indices = []
+                else:
+                    obs_frame_indices = self.optimal_schedule[self._current_step]
         # Type checks. Both observed and latent indices should be lists.
         assert isinstance(obs_frame_indices, list) and isinstance(latent_frame_indices, list)
         # Make sure the observed frames are either osbserved or already generated before
@@ -76,6 +84,9 @@ class InferenceStrategyBase:
             assert idx in self._done_frames, f"Attempting to condition on frame {idx} while it is not generated yet.\nGenerated frames: {self._done_frames}\nObserving: {obs_frame_indices}\nGenerating: {latent_frame_indices}"
         assert np.all(np.array(latent_frame_indices) < self._video_length)
         self._done_frames.update([idx for idx in latent_frame_indices if idx not in self._done_frames])
+        if unconditional:
+            # Allows the unconditional sampling to continue the next inference steps as if it was a conditional model.
+            self._obs_frames = latent_frame_indices
         self._current_step += 1
         return obs_frame_indices, latent_frame_indices
 
@@ -136,6 +147,10 @@ class AdaptiveInferenceStrategyBase(InferenceStrategyBase):
         return batch_selected_indices
 
     def __next__(self):
+        if self._num_obs == 0 and self._current_step == 0:
+            # Unconditional sampling
+            obs_frame_indices, latent_frame_indices = super().__next__()
+            return [obs_frame_indices for _ in range(len(self.videos))], [latent_frame_indices for _ in range(len(self.videos))]
         # Check if the video is fully generated.
         if self.is_done():
             raise StopIteration
@@ -536,7 +551,8 @@ class GoogleFS1(InferenceStrategyBase):
             latent_frame_indices.remove(obs_frame_indices[1])
         for idx in obs_frame_indices:
             assert idx not in latent_frame_indices
-        assert len(obs_frame_indices) + len(latent_frame_indices) == 9, "This is not implemented for cases where there is frames left over."
+        while len(obs_frame_indices) + len(latent_frame_indices) < 9:
+            obs_frame_indices += [min(min(latent_frame_indices), min(obs_frame_indices)) - 1]
         return obs_frame_indices, latent_frame_indices
 
 
