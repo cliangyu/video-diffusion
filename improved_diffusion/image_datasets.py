@@ -390,7 +390,7 @@ class CarlaVariableLengthDataset(CarlaDataset):
         print('in variable length dataset __init__')
         self.T = T
         print(self.T)
-        self.fnames = [Path(p).name for p in glob.glob(os.path.join(path, 'video_*.pt'))]
+        self.fnames = sorted([Path(p).name for p in glob.glob(os.path.join(path, 'video_*.pt'))])
         print(os.path.join(path, 'video_*.pt'))
         print(self.fnames)
         self.path = Path(path)

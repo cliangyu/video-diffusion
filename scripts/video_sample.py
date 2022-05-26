@@ -310,7 +310,7 @@ if __name__ == "__main__":
     if args.dataset_partition == "variable_length":
          args.eval_dir = args.eval_dir / "variable_length"
          if args.T is None:
-             args.T = {'0': 522, '1': 268}[os.environ["SLURM_ARRAY_TASK_ID"]]
+             args.T = {'0': 268, '1': 431, '2': 948}[os.environ["SLURM_ARRAY_TASK_ID"]]
     (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.eval_dir / 'samples'}")
 

@@ -56,6 +56,9 @@ class InferenceStrategyBase:
         self.optimal_schedule = None if optimal_schedule_path is None else torch.load(optimal_schedule_path)
         self._current_step = 0 # Counts the number of steps.
 
+    def get_unconditional_indices(self):
+        return list(range(self._max_frames))
+
     def __next__(self):
         # Check if the video is fully generated.
         if self.is_done():
@@ -65,7 +68,7 @@ class InferenceStrategyBase:
             # Handles unconditional sampling by sampling a batch of self._max_frame latent frames in the first
             # step, then proceeding as usual in the next steps.
             obs_frame_indices = []
-            latent_frame_indices = list(range(self._max_frames))
+            latent_frame_indices = self.get_unconditional_indices()
             unconditional = True
         else:
             # Get the next indices from the function overloaded by each inference strategy.
@@ -253,6 +256,11 @@ class MixedAutoregressiveIndependent(InferenceStrategyBase):
 
 class HierarchyNLevel(InferenceStrategyBase):
 
+    def get_unconditional_indices(self):
+        self.current_level = 1
+        self.last_sampled_idx = self._video_length - 1
+        return list(int(i) for i in np.linspace(0, self._video_length-1, self._max_frames))
+
     @property
     def N(self):
         raise NotImplementedError
@@ -419,16 +427,23 @@ class GoalDirectedHierarchyNLevel(HierarchyNLevel):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        for i in range(1, 6):
+            self._obs_frames.append(self._video_length-i)
+            self._done_frames.add(self._video_length-i)
 
     def next_indices(self):
+        for i in range(1, 6):
+            self._obs_frames.remove(self._video_length-i)
+            self._done_frames.remove(self._video_length-i)
+        self._video_length -= 5
+        self._max_frames -= 5
         obs_frame_indices, latent_frame_indices = super().next_indices()
-        if len(self._done_frames) == len(self._obs_frames):  # then it is the first step
-            last_frame = self._video_length-1
-            assert last_frame in latent_frame_indices
-            latent_frame_indices.remove(last_frame)
-            obs_frame_indices.append(last_frame)
-            self._obs_frames.append(self._video_length-1)
-            self._done_frames.add(self._video_length-1)
+        obs_frame_indices = obs_frame_indices + list(range(self._video_length, self._video_length+5))
+        self._video_length += 5
+        self._max_frames += 5
+        for i in range(1, 6):
+            self._obs_frames.append(self._video_length-i)
+            self._done_frames.add(self._video_length-i)
         return obs_frame_indices, latent_frame_indices
 
 
@@ -447,6 +462,7 @@ class GoalDirectedAutoreg(InferenceStrategyBase):
 
     def next_indices(self):
         obs_frame_indices = sorted(self._done_frames)[-(self._max_frames - self._step_size):]
+        print(obs_frame_indices)
         first_idx = 0 #obs_frame_indices[-2] + 1
         while first_idx in self._done_frames:
             first_idx += 1
