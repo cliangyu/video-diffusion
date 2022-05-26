@@ -56,6 +56,9 @@ class InferenceStrategyBase:
         self.optimal_schedule = None if optimal_schedule_path is None else torch.load(optimal_schedule_path)
         self._current_step = 0 # Counts the number of steps.
 
+    def get_unconditional_indices(self):
+        return list(range(self._max_frames))
+
     def __next__(self):
         # Check if the video is fully generated.
         if self.is_done():
@@ -65,7 +68,7 @@ class InferenceStrategyBase:
             # Handles unconditional sampling by sampling a batch of self._max_frame latent frames in the first
             # step, then proceeding as usual in the next steps.
             obs_frame_indices = []
-            latent_frame_indices = list(range(self._max_frames))
+            latent_frame_indices = self.get_unconditional_indices()
             unconditional = True
         else:
             # Get the next indices from the function overloaded by each inference strategy.
@@ -252,6 +255,11 @@ class MixedAutoregressiveIndependent(InferenceStrategyBase):
 
 
 class HierarchyNLevel(InferenceStrategyBase):
+
+    def get_unconditional_indices(self):
+        self.current_level = 1
+        self.last_sampled_idx = self._video_length - 1
+        return list(int(i) for i in np.linspace(0, self._video_length-1, self._max_frames))
 
     @property
     def N(self):
