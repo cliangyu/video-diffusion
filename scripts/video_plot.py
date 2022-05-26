@@ -3,34 +3,42 @@ from PIL import Image
 from argparse import ArgumentParser
 import matplotlib.pyplot as plt
 
-from improved_diffusion.train_util import concat_images_with_padding
 
+def load_frames_from_gif(path, indices):
+    gif = Image.open(path)
+    frames = []
+    for index in indices:
+        gif.seek(index)
+        frames.append(np.asarray(gif))
+    return frames
 
-def plot_video(args):
-    video = np.load(args.path)
-    # pad_dim_h = pad_dim_ = 2
-    # pad_val = 0
-    # img = concat_images_with_padding(
-    #     [concat_images_with_padding(video, horizontal=True, pad_dim=pad_dim_h, pad_val=pad_val, pad_ends=pad_ends) for vid in videos],
-    #     horizontal=False, pad_dim=pad_dim_v, pad_val=pad_val, pad_ends=pad_ends,
-    # )
-    #img = concat_images_with_padding(video, horizontal=True, pad_dim)
-    #Image.fromarray(img).save(args.save_as)
-    video = video.transpose(0, 2, 3, 1)
-    frame_indices = np.concatenate([np.arange(0, 35, 5), np.arange(36, 300, 20)])
-    video = video[frame_indices]
-    fig, axes = plt.subplots(ncols=len(video))
-    for ax, frame, i in zip(axes, video, frame_indices):
+name = 'mazes-autoreg'
+#name = 'mazes-hierarchy-2'
+#name = 'minerl-autoreg'
+#name = 'minerl-hierarchy-2'
+T = 300 if 'mazes' in name else 500
+video_paths = [
+    f"/ubc/cs/research/plai-scratch/wsgh/syncing-plots/basic-videos/{name}-{i}.gif"
+    for i in [0, 1, 2, 5, 6, 7]
+]
+
+indices_to_plot = [int(i) for i in np.linspace(1, T-1, 14)]
+fig, axes = plt.subplots(nrows=len(video_paths), ncols=len(indices_to_plot), figsize=(7.5, 3.7))
+plt.subplots_adjust(wspace=0, hspace=0.1)
+for ax_row, path in zip(axes, video_paths):
+    frames = load_frames_from_gif(path, indices_to_plot)
+    for ax, frame, index in zip(ax_row, frames, indices_to_plot):
+        if index < 36:
+            c = np.array([10, 210, 255])
+            frame[:2, :] = c
+            frame[-2:, :] = c
+            frame[:, :2] = c
+            frame[:, -2:] = c
         ax.imshow(frame)
-        ax.set_title(str(i), fontsize=8)
-        ax.axis('off')
-    plt.savefig(args.save_as, bbox_inches='tight')
+        ax.set_xticks([])
+        ax.set_yticks([])
 
+for ax, t in zip(axes[-1], indices_to_plot):
+    ax.set_xlabel(t+1, fontsize=8)
 
-if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--path", type=str, required=True)
-    parser.add_argument("--save_as", type=str, required=True)
-    args = parser.parse_args()
-
-    plot_video(args)
+fig.savefig(f'visualisations/{name}.pdf', bbox_inches='tight')
