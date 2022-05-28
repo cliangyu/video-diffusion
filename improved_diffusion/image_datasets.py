@@ -23,6 +23,7 @@ video_data_paths_dict = {
     "mazes":        "datasets/mazes-torch",
     "mazes_cwvae":  "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
+    "carla_with_traffic": "datasets/carla/with-traffic",
     "carla_no_traffic": "datasets/carla/no-traffic",
     "carla_no_traffic_variable_length": "datasets/carla/no-traffic-variable-length",
 }
@@ -116,7 +117,7 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
-    elif dataset_name == "carla_no_traffic":
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
         dataset = CarlaDataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
@@ -145,7 +146,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "test")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
-    elif dataset_name == "carla_no_traffic":
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
         dataset = CarlaDataset(train=False, path=data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
