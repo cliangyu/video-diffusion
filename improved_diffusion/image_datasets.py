@@ -33,6 +33,7 @@ default_T_dict = {
     "mazes":        300,
     "mazes_cwvae":  300,
     "bouncy_balls": 100,
+    "carla_with_traffic": 1000,
     "carla_no_traffic": 1000,
 }
 
@@ -41,6 +42,7 @@ default_image_size_dict = {
     "mazes":        64,
     "mazes_cwvae":  64,
     "bouncy_balls": 32,
+    "carla_with_traffic": 128,
     "carla_no_traffic": 128,
 }
 
@@ -173,7 +175,7 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
-    elif dataset_name == "carla_no_traffic":
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
         dataset = CarlaDataset(train=True, path=data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
