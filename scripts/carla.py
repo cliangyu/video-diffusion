@@ -9,6 +9,7 @@ import imageio
 import matplotlib.pyplot as plt
 import argparse
 import torch
+import pickle
 
 # from https://stackoverflow.com/questions/2281850/timeout-function-if-it-takes-too-long-to-finish  --------------------------------------------------------------
 import signal
@@ -29,14 +30,17 @@ class timeout:
 with timeout(seconds=1800):
     IN_COLAB = False
 
-    def_res = Resolution(128, 128)
-    scale = 1
-
     parser = argparse.ArgumentParser()
     parser.add_argument('save_dir', type=str, help="Where to save the generated videos/coords.")
     parser.add_argument('--port', type=int, default=5555, help="5555 is the server with other cars. Currently there are no other servers")
-    parser.add_argument('--town', type=str, default='Town01')
+    parser.add_argument('--max_traffic', type=int, default=200)
+    parser.add_argument('--max_pedestrian', type=int, default=200)
+    parser.add_argument('--res', type=int, default=512)
+    parser.add_argument('--videos_per_trajectory', type=int, default=5)
     args = parser.parse_args()
+
+    def_res = Resolution(args.res, args.res)
+    scale = 1
 
     sensors_dict = {
         'front-cam': {
@@ -59,7 +63,11 @@ with timeout(seconds=1800):
     server_ip = "simulate.inverted.ai"
     config.zmq_server_address = f"{server_ip}:{args.port}"
     env = IAIEnv(config)
-    world_parameters = dict(carlatown=args.town, traffic_count=0, pedestrian_count=0, weather='Random')
+    n_traffic = np.random.randint(args.max_traffic+1)
+    n_pedestrian = np.random.randint(args.max_pedestrian+1)
+    town = np.random.choice(['Town01', 'Town02', 'Town03', 'Town04'])
+    #weather = np.random.choice(['ClearNoon', 'SoftRainNoon', 'HardRainNoon','ClearSunset', 'WetCloudySunset', 'SoftRainSunset', 'Random'])  this is not as random as possible
+    world_parameters = dict(carlatown=town, traffic_count=n_traffic, pedestrian_count=n_pedestrian, weather='Random')
 
     obs = env.set_scenario('egodriving', world_parameters=world_parameters, sensors=sensors_dict)
 
@@ -68,14 +76,15 @@ with timeout(seconds=1800):
     height = np.max([sensors_dict[sns]['resolution'].height*scale for sns in sensors_dict if sensors_dict[sns]['sensor_type']=='camera'])
     full_res = Resolution(width, height)
 
+
     action = [0.0, 0.0]
     obs, reward, done, info = env.step(action)
+
 
 def reset_frames():
     return {'images':[], 'coords': [], 'actions': []}
 frames = reset_frames()
 
-videos_per_trajectory = 10
 video_length = 1000
 
 def get_save_name(index, mode='video', ext='pt'):
@@ -84,13 +93,13 @@ def get_save_name(index, mode='video', ext='pt'):
 def next_save_index():
     i = 0
     while os.path.exists(get_save_name(i)):
-        i += videos_per_trajectory
+        i += args.videos_per_trajectory
     return i
 
 trajectory_index = next_save_index()
 
 walltime = time.time()
-for i in range(0, video_length*videos_per_trajectory):
+for i in range(0, video_length*args.videos_per_trajectory):
     try:
         with timeout(seconds=10):
             action = info['expert_action']
@@ -111,6 +120,7 @@ for i in range(0, video_length*videos_per_trajectory):
         np.save(get_save_name(save_index, 'coords', 'npy'), coords)
         actions = np.array(frames['actions'])
         np.save(get_save_name(save_index, 'actions', 'npy'), coords)
+        pickle.dump(world_parameters, open(get_save_name(save_index, 'config', 'pkl'), 'wb'))
         frames = reset_frames()
         print(f'generated {video_length} frames in {time.time()-walltime} seconds')
         walltime = time.time()

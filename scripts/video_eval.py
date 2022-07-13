@@ -33,7 +33,7 @@ class LazyDataFetch:
         self.obs_length = obs_length
         self.drop_obs = drop_obs
         samples_dir = Path(eval_dir) / "samples"
-        assert samples_dir.exists()
+        assert samples_dir.exists(), f"Samples dir {samples_dir} does not exist."
         filenames = [(x, [int(num) for num in x.stem.split("_")[-1].split("-")]) for x in samples_dir.glob("sample_*.npy")]
         # filenames has the following structure: [(filename, (video_idx, sample_idx))]
         filenames.sort(key=lambda x: x[1][0])
@@ -140,7 +140,7 @@ def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
             preds = map(lambda x: list(zip(*x.items())), preds) # A list of size B. Each item is a tuple of (list of filenames, list of numpy arrays)
             preds_batch_names, preds_batch = list(zip(*list(preds)))
             gt_batch = np.stack(gt_batch)[:, :T] # BxTxCxHxW
-            preds_batch = np.stack(preds_batch)[:, :, :T] # BxNxTxCxHxW
+            preds_batch = np.stack(preds_batch)[:, :num_samples, :T] # BxNxTxCxHxW
             # Cache filename: dir/.preds_batch_names-T.fvd_features.npz
             assert preds_batch.shape[1] == num_samples, f"Expected at least {num_samples} video prediction samples."
             # Convert image pixels to bytes
@@ -161,8 +161,6 @@ def compute_fvd_lazy(data_fetch, T, num_samples, batch_size=16):
         for k in range(num_samples):
             fvd[k] = fvd_handler.compute_fvd(pred_features[k], gt_features)
     return {"fvd": fvd}
-
-
 
 
 def compute_metrics_lazy(data_fetch, T, num_samples, C=3):
@@ -239,16 +237,13 @@ if __name__ == "__main__":
             model_config = json.load(f)
             if args.dataset is None:
                 args.dataset = model_config["dataset"]
-            if args.T is None:
-                args.T = model_config["T"]
     if args.batch_size is None:
         if "mazes" in args.dataset:
             args.batch_size = 16
         elif "minerl" in args.dataset:
             args.batch_size = 8
         elif "carla" in args.dataset:
-            raise NotImplementedError("Default batch size for CARLA dataset has not been decided yet.")
-            args.batch_size = None
+            args.batch_size = 4
     # Load dataset
     dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset) # Load the full-length videos. We'll use the first T frames for evaluation, however.
     drange = [-1, 1] # Range of dataset's pixel values

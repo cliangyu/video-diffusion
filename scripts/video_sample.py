@@ -16,7 +16,7 @@ from improved_diffusion.script_util import (
     args_to_dict,
 )
 from improved_diffusion import dist_util
-from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset
+from improved_diffusion.image_datasets import get_train_dataset, get_test_dataset, get_variable_length_dataset
 from improved_diffusion.script_util import str2bool
 from improved_diffusion import inference_util
 from improved_diffusion import test_util
@@ -60,7 +60,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     samples = torch.zeros_like(batch).cpu()
     samples[:, :obs_length] = batch[:, :obs_length]
     if 'goal-directed' in mode:
-        samples[:, -1] = batch[:, -1]
+        samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
     frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
@@ -146,7 +146,7 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
 
 
 def visualise(args):
-    optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
+    optimal_schedule_path = None if getattr(args, "optimality", None) is None else args.eval_dir / "optimal_schedule.pt"
     if 'adaptive' in args.inference_mode:
         dataset_name = dist_util.load_state_dict(args.checkpoint_path, map_location="cpu")['config']['dataset']
         dataset = globals()[f"get_{args.dataset_partition}_dataset"](dataset_name=dataset_name, T=args.T)
@@ -170,13 +170,36 @@ def visualise(args):
             if index is not None:
                 obs_frame_indices, latent_frame_indices = obs_frame_indices[index], latent_frame_indices[index]
             exist_indices.extend(latent_frame_indices)
-            new_layer = torch.zeros((args.T, 3)).int()
-            new_layer[exist_indices, 0] = 50
-            new_layer[obs_frame_indices, 0] = 255
-            new_layer[latent_frame_indices, 2] = 255
-            vis.append(new_layer)
-            vis.append(new_layer*0)
-        vis = torch.stack(vis)
+            if args.big_visualise:
+                new_layer = torch.zeros((args.T, 3)).int()
+                border_colour = torch.tensor([0, 0, 0]).int()
+                not_sampled_colour = torch.tensor([255, 255, 255]).int()
+                exist_colour = torch.tensor([50, 50, 50]).int()
+                obs_colour = torch.tensor([50, 50, 255]).int()
+                latent_colour = torch.tensor([255, 69, 0]).int()
+                # not_sampled_colour = torch.tensor([255, 255, 255]).int()
+                # exist_colour = torch.tensor([153, 153, 153]).int()
+                # obs_colour = torch.tensor([55, 126, 184]).int()
+                # latent_colour = torch.tensor([255, 127, 0]).int()
+                new_layer = torch.zeros((args.T, 3)).int()
+                new_layer[:, :] = not_sampled_colour
+                new_layer[exist_indices, :] = exist_colour
+                new_layer[obs_frame_indices, :] = obs_colour
+                new_layer[latent_frame_indices, :] = latent_colour
+                scale = 4
+                new_layer = new_layer.repeat_interleave(scale+1, dim=0)
+                new_layer[::(scale+1)] = border_colour
+                new_layer = torch.cat([new_layer, new_layer[:1]], dim=0)
+                vis.extend([new_layer.clone() for _ in range(scale+1)])
+                vis[-1][:] = border_colour
+            else:
+                new_layer = torch.zeros((args.T, 3)).int()
+                new_layer[exist_indices, 0] = 50
+                new_layer[obs_frame_indices, 0] = 255
+                new_layer[latent_frame_indices, 2] = 255
+                vis.append(new_layer)
+                vis.append(new_layer*0)
+        vis = torch.stack([vis[-1], *vis])
         if index is not None:
             path = f"{path}_index-{index}"
         path = f"{path}.png"
@@ -187,7 +210,9 @@ def visualise(args):
         frame_indices_iterator.set_videos(batch)
     indices = list(frame_indices_iterator)
     path = f"visualisations/sample_vis_{args.inference_mode}"
-    if args.optimality is not None:
+    if args.obs_length == 0:
+        path += "_uncond"
+    if getattr(args, "optimality", None) is not None:
         path += "_optimal-" + args.optimality
     path += f"_T={args.T}_sampling_{args.step_size}_out_of_{args.max_frames}"
     if 'adaptive' in args.inference_mode:
@@ -202,7 +227,7 @@ if __name__ == "__main__":
     parser.add_argument("checkpoint_path", type=str)
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
-    parser.add_argument("--dataset_partition", default="test", choices=["train", "test"])
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test", "variable_length"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
     parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
@@ -223,6 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_samples", type=int, default=1, help="Number of samples to generate for each test video.")
     parser.add_argument("--sample_idx", type=int, default=None, help="Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.")
     parser.add_argument("--just_visualise", action='store_true', help="Make visualisation of sampling mode instead of doing it.")
+    parser.add_argument("--big_visualise", action='store_true', help="Make visualisation big.")
     parser.add_argument("--optimality", type=str, default=None,
         choices=["linspace-t", "random-t",
                  "linspace-t-force-nearby", "random-t-force-nearby"],
@@ -281,8 +307,16 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
     args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
     args.eval_dir = args.eval_dir
+    if args.dataset_partition == "variable_length":
+         args.eval_dir = args.eval_dir / "variable_length"
+         if args.T is None:
+             args.T = {'0': 268, '1': 431, '2': 948}[os.environ["SLURM_ARRAY_TASK_ID"]]
     (args.eval_dir / "samples").mkdir(parents=True, exist_ok=True)
     print(f"Saving samples to {args.eval_dir / 'samples'}")
+
+    if args.T is None:
+        args.T = dataset[0][0].shape[0]
+        print(f"Using the dataset video length as the T value ({args.T}).")
 
     if args.just_visualise:
         visualise(args)

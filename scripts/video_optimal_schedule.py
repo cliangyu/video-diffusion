@@ -32,14 +32,24 @@ default_model_configs = {"enforce_position_invariance": False,
                          "cond_emb_type": "channel"}
 
 
-def submit(remaining_steps, time="3:00:00", max_slurm_array=None):
+def submit(remaining_steps, args):
+    extra_args = ""
+    if args.slurm_cluster is not None:
+        if args.slurm_cluster == "submit-ml":
+            pass#extra_args = "--account=rti  --partition=ubcml-rti"
+        elif args.slurm_cluster == "cc":
+            extra_args = "--account=rrg-fwood"
+        elif args.slurm_cluster == "plai_towers":
+            extra_args = "--partition=plai_towers"
+    if args.slurm_min_array > 0:
+        remaining_steps = [x for x in remaining_steps if x >= args.slurm_min_array]
     if len(remaining_steps) == 0:
         print("Nothing left to do!")
         return
     SUBMISSION_CMD = "~/.dotfiles/job_submission/submit_job.py"
-    SUBMISSION_ARGS = f"--mem=32G --gres=gpu:1 --time {time} --mail-type END,FAIL"
-    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if max_slurm_array is None else f"%{max_slurm_array}")
-    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg}"
+    SUBMISSION_ARGS = f"--mem={args.slurm_mem} --gres=gpu:1 --time {args.slurm_time_hrs}:00:00 --mail-type END,FAIL"
+    array_arg = "--array " + ",".join(map(str, remaining_steps)) + ("" if args.slurm_max_array is None else f"%{args.slurm_max_array}")
+    SUBMISSION_ARGS = f"{SUBMISSION_ARGS} {array_arg} {extra_args}"
     job_name = "viddiff-opt-sched"
 
     submission_args = f"-J {job_name} {SUBMISSION_ARGS}"
@@ -85,6 +95,7 @@ def get_mse_random(latent_frame_indices, candidate_idx, model, diffusion, datalo
 
 
 def force_nearby(latent_frame_indices, obs_frame_indices, done_frame_indices):
+    # Sort the done_frame_indices list
     done_frame_indices = sorted(list(done_frame_indices))
     # Closest frame before the latent frames
     idx = None
@@ -158,6 +169,17 @@ def get_mse_linspace(latent_frame_indices, obs_frame_indices,
     return res
 
 
+def update_schedule_on_disk(schedule_path, schedule, force=True):
+    with test_util.Protect(schedule_path):
+        # Re-load the test schedule, in case it was modified by another process.
+        saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
+        for k,v in schedule.items():
+            if force:
+                assert k not in saved_schedule, f"Found {k} in the saved schedule! {schedule_path}"
+            saved_schedule[k] = v
+        torch.save(saved_schedule, schedule_path)
+
+
 def main(args, model, diffusion, dataset, schedule_path, verbose=True):
     task_id = int(os.environ["SLURM_ARRAY_TASK_ID"]) if "SLURM_ARRAY_TASK_ID" in os.environ else None
     frame_indices_iterator = inference_util.inference_strategies[args.inference_mode](
@@ -165,20 +187,29 @@ def main(args, model, diffusion, dataset, schedule_path, verbose=True):
     )
     inference_schedule = {} # A dictionary from "inference step" to the list of optimal observed frame indices.
     schedule_path = Path(schedule_path)
+    partial_schedule_path = schedule_path.parent / ("." + schedule_path.stem + "_partial.pt")
+    # Load the schedule, if it exists
     if schedule_path.exists():
         with test_util.Protect(schedule_path):
             saved_schedule = torch.load(schedule_path)
     else:
         saved_schedule = {}
-    for cnt, (_, latent_frame_indices) in enumerate(tqdm(frame_indices_iterator, leave=False)):
+    # Load the partial schedule, if it exists. Partial schedule stores the partial sequence of optimal observations.
+    # Storing it allows the jobs to be resumed if the job is killed.
+    if partial_schedule_path.exists():
+        with test_util.Protect(partial_schedule_path):
+            partial_schedule = torch.load(partial_schedule_path)
+    else:
+        partial_schedule = {}
+    for cnt, (_, latent_frame_indices) in enumerate(tqdm(frame_indices_iterator, leave=False, desc="Inference step")):
         if task_id is not None and cnt != task_id:
             print(f"Skipping inference step {cnt}; not for this instance of array job.")
             continue
         if cnt in saved_schedule:
             print(f"Skipping inference step {cnt}; already done.")
-            #continue
+            continue
         n_to_condition_on = frame_indices_iterator._max_frames - len(latent_frame_indices)
-        obs_frame_indices = set()
+        obs_frame_indices = set() if cnt not in partial_schedule else set(partial_schedule[cnt]) # Pre-fill the obs_frame_indices with the partial schedule
         if "force-nearby" in args.optimality:
             force_nearby(latent_frame_indices=latent_frame_indices,
                          obs_frame_indices=obs_frame_indices,
@@ -201,7 +232,7 @@ def main(args, model, diffusion, dataset, schedule_path, verbose=True):
 
             # Find the next best observed frame index
             metrics = {} # Will be a dictionary of the form {frame_idx: {diffusion_t: [list of metric values]}}
-            for candidate_idx in tqdm(frame_indices_iterator._done_frames):
+            for candidate_idx in tqdm(frame_indices_iterator._done_frames, desc="Candidate index"):
                 if candidate_idx in latent_frame_indices or candidate_idx in obs_frame_indices:
                     # Skip the latent frames (these are just added to the done list by the InferenceStrategyBase class)
                     # Also skip the frames that are already in the observed list
@@ -224,23 +255,19 @@ def main(args, model, diffusion, dataset, schedule_path, verbose=True):
             best_idx, best_metric = metrics[0]
             obs_frame_indices.add(best_idx)
             print(f"(Step #{cnt}) Best frame {best_idx}, metric = {best_metric}")
+            # Update the partial schedule
+            update_schedule_on_disk(schedule_path=partial_schedule_path, schedule={cnt: list(obs_frame_indices)}, force=False)
         obs_frame_indices = sorted(list(obs_frame_indices))
         inference_schedule[cnt] = obs_frame_indices
         print(f"Step #{cnt}:\n\tLatent: {latent_frame_indices}\n\tObserved: {obs_frame_indices}")
-        with test_util.Protect(schedule_path):
-            # Re-load the test schedule, in case it was modified by another process.
-            saved_schedule = torch.load(schedule_path) if schedule_path.exists() else {}
-            for k,v in inference_schedule.items():
-                assert k not in saved_schedule, f"Found {k} in the saved schedule!"
-                saved_schedule[k] = v
-            torch.save(saved_schedule, schedule_path)
-            inference_schedule = {}
+        update_schedule_on_disk(schedule_path=schedule_path, schedule=inference_schedule)
+        inference_schedule = {}
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("checkpoint_path", type=str)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
@@ -265,7 +292,11 @@ if __name__ == "__main__":
     parser.add_argument("--step", type=int, default=None, help="Which step of inference to produce optimal observations for. Used for parallel sampling on multiple machines.")
     # Job submission arguments
     parser.add_argument("--submit", action="store_true", help="If given, figures out which steps of the optimal schedule are remaining to be optimized, then submits an array job doing them.")
-    parser.add_argument("--max_slurm_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
+    parser.add_argument("--slurm_cluster", type=str, choices=["plai", "plai_towers", "cc", "submit-ml"], default=None)
+    parser.add_argument("--slurm_max_array", type=int, default=None, help="If given, will use it as a limit on the number of concurrently running array jobs.")
+    parser.add_argument("--slurm_min_array", type=int, default=0, help="Specifies the minimum index allowed to use for SLURM's --array argument.")
+    parser.add_argument("--slurm_time_hrs", type=int, default=3)
+    parser.add_argument("--slurm_mem", type=str, default="32G")
     args = parser.parse_args()
 
     if args.subset_size is None:
@@ -301,6 +332,15 @@ if __name__ == "__main__":
     args.eval_dir.mkdir(parents=True, exist_ok=True)
     schedule_path = args.eval_dir / "optimal_schedule.pt"
     print(f"Saving the optimal inference schedule to {schedule_path}")
+    if args.batch_size is None:
+        args.batch_size = 5 if "carla" in model_args.dataset else 16
+
+    # Load the test set
+    dataset = get_train_dataset(dataset_name=model_args.dataset)
+    print(f"Dataset size = {len(dataset)}")
+    if args.T is None:
+        args.T = dataset[0][0].shape[0]
+        print(f"Using the dataset video length as the T value ({args.T}).")
 
     if args.submit:
         # Figure out which steps are remaining
@@ -309,15 +349,8 @@ if __name__ == "__main__":
             video_length=args.T, num_obs=args.obs_length, max_frames=args.max_frames, step_size=args.step_size)
         num_steps = len(list(frame_indices_iterator))
         remaining_steps = [step for step in range(num_steps) if step not in saved_schedule]
-        submit(remaining_steps, time="3:00:00", max_slurm_array=args.max_slurm_array)
+        submit(remaining_steps, args=args)
         quit()
-
-    # Load the test set
-    dataset = get_train_dataset(dataset_name=model_args.dataset)
-    print(f"Dataset size = {len(dataset)}")
-    if args.T is None:
-        args.T = dataset[0][0].shape[0]
-        print(f"Using the dataset video length as the T value ({args.T}).")
 
     # Generate the samples
     main(args, model, diffusion, dataset, schedule_path=schedule_path)
