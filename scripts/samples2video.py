@@ -13,6 +13,7 @@ from improved_diffusion.test_util import mark_as_observed, tensor2gif, tensor2mp
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--samples_dir", type=str, required=True)
+    parser.add_argument("--out_dir", type=str, default=None)
     parser.add_argument("--dataset", type=str, default=None)
     parser.add_argument("--add_gt", action="store_true")
     parser.add_argument("--do_n", type=int, default=50)
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     else:
         out_dir = "videos"
 
-    out_dir = Path(args.samples_dir).parent / out_dir
+    out_dir = (Path(args.out_dir) if args.out_dir is not None else Path(args.samples_dir).parent) / out_dir
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
 
@@ -46,7 +47,11 @@ if __name__ == "__main__":
             print(f"Skipping {video_name}. Already exists.")
             continue
         print(f"Processing {video_name}")
-        video = np.load(filename)
+        try:
+            video = np.load(filename)
+        except PermissionError:
+            print('Permission denied.')
+            continue
         if args.obs_length > 0:
             mark_as_observed(video[:args.obs_length])
         if args.add_gt:

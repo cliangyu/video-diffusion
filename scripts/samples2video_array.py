@@ -30,7 +30,7 @@ if __name__ == "__main__":
     out_path = out_dir / f"{args.dataset}_{method}_{args.do_n}_{args.n_seeds}_{args.obs_length}.{args.format}"
 
     videos = []
-    for video_i in range(args.do_n):
+    for video_i in [5, 17, 18, 10, 15]:  # range(args.do_n):
         data_idx = video_i
         gt_drange = [-1, 1]
         gt_video, _ = dataset[data_idx]
@@ -39,12 +39,19 @@ if __name__ == "__main__":
         gt_video = gt_video.astype(np.uint8)
         mark_as_observed(gt_video)
         videos.append([] if args.no_gt else [gt_video])
-        for seed in range(args.n_seeds):
-            filename = Path(args.samples_dir) / f"sample_000{video_i}-{seed}.npy"
+        seed = 0
+        done = 0
+        while done < args.n_seeds:
+            filename = Path(args.samples_dir) / f"sample_{video_i:04d}-{seed}.npy"
             print(filename)
-            video = np.load(filename)
-            mark_as_observed(video[:args.obs_length])
-            videos[-1].append(video)
+            try:
+                video = np.load(filename)
+                mark_as_observed(video[:args.obs_length])
+                videos[-1].append(video)
+                done += 1
+            except PermissionError:
+                pass
+            seed += 1
         videos[-1] = np.concatenate(videos[-1], axis=-2)
     video = np.concatenate(videos, axis=-1)
 
