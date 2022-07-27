@@ -51,7 +51,7 @@ def get_masks(x0, num_obs):
 
 
 @torch.no_grad()
-def infer_video(mode, models, diffusions, batch, obs_length):
+def infer_video(mode, models, diffusions, batch, obs_length, use_gradient_method):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -92,7 +92,8 @@ def infer_video(mode, models, diffusions, batch, obs_length):
                               latent_mask=latent_mask,
                               kinda_marg_mask=kinda_marg_mask),
             latent_mask=latent_mask,
-            return_attn_weights=False)
+            return_attn_weights=False,
+            use_gradient_method=use_gradient_method,)
         # Fill in the generated frames
         if 'adaptive' in mode:
             n_obs = len(obs_frame_indices[0])
@@ -103,7 +104,7 @@ def infer_video(mode, models, diffusions, batch, obs_length):
     return samples.numpy()
 
 
-def main(args, models, diffusions, dataloader, dataset_indices=None):
+def main(args, models, diffusions, dataloader, use_gradient_method, dataset_indices=None):
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
     cnt = 0
@@ -119,7 +120,7 @@ def main(args, models, diffusions, dataloader, dataset_indices=None):
                     batch = batch[:, :args.T]
                 batch = batch.to(args.device)
                 recon = infer_video(mode=args.inference_mode, models=models, diffusions=diffusions,
-                                    batch=batch, obs_length=args.obs_length)
+                                    batch=batch, obs_length=args.obs_length, use_gradient_method=use_gradient_method)
                 recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
                 for i in range(batch_size):
@@ -147,6 +148,7 @@ if __name__ == "__main__":
                         help="Number of observed frames. It will observe this many frames from the beginning of the video and predict the rest. Defaults to 36.")
     parser.add_argument("--indices", type=int, nargs="*", default=None,
                         help="If not None, only generate videos for the specified indices. Used for handling parallelization.")
+    parser.add_argument("--use_gradient_method", action='store_true')
     parser.add_argument("--use_ddim", type=str2bool, default=False)
     parser.add_argument("--timestep_respacing", type=str, default="")
     parser.add_argument("--T", type=int, default=None,
@@ -234,4 +236,4 @@ if __name__ == "__main__":
             print(f"Saved model config at {json_path}")
 
     # Generate the samples
-    main(args, models, diffusions, dataloader, dataset_indices=args.indices)
+    main(args, models, diffusions, dataloader, dataset_indices=args.indices, use_gradient_method=args.use_gradient_method)
