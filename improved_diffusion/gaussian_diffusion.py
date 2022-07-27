@@ -6,6 +6,7 @@ Docstrings have been added, as well as DDIM sampling and a new collection of bet
 """
 
 import enum
+from http.client import METHOD_NOT_ALLOWED
 import math
 
 import numpy as np
@@ -238,7 +239,7 @@ class GaussianDiffusion:
 
     def p_mean_variance(
             self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None,
-            return_attn_weights=False,
+            return_attn_weights=False, use_gradient_method=False,
     ):
         """
         Apply the model to get p(x_{t-1} | x_t), as well as a prediction of
@@ -263,12 +264,17 @@ class GaussianDiffusion:
         if model_kwargs is None:
             model_kwargs = {}
 
-        B, C = x.shape[:2]
-        assert t.shape == (B,)
-        model_output, attn_weights = model(
-            x, self._scale_timesteps(t), return_attn_weights=return_attn_weights,
-            **model_kwargs
-        )
+        if use_gradient_method:
+            x.requires_grad_(True)
+            model_kwargs['obs_mask'] = model_kwargs['obs_mask'] * 0.
+
+        with th.enable_grad() if use_gradient_method else th.no_grad():
+            B, C = x.shape[:2]
+            assert t.shape == (B,)
+            model_output, attn_weights = model(
+                x, self._scale_timesteps(t), return_attn_weights=return_attn_weights,
+                **model_kwargs
+            )
 
         if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
             assert model_output.shape == (B, C * 2, *x.shape[2:])
@@ -329,6 +335,19 @@ class GaussianDiffusion:
         assert (
             model_mean.shape == model_log_variance.shape == pred_xstart.shape == x.shape
         )
+
+        if use_gradient_method:
+            with th.enable_grad():
+                pixelwise_diff_to_obs = (pred_xstart - model_kwargs['x0']) * model_kwargs['obs_mask']
+                obs_mismatch = (pixelwise_diff_to_obs**2).sum()
+                print('this should be none:', x.grad)
+                obs_mismatch.backward()
+                g = x.grad
+            weighting_factor = 2.
+            alphas = 1 - self.betas
+            alpha_t = alphas[t].view(-1, 1, 1, 1, 1)
+            model_mean = model_mean - weighting_factor * alpha_t * g / 2
+
         return {
             "mean": model_mean,
             "variance": model_variance,
@@ -367,7 +386,7 @@ class GaussianDiffusion:
 
     def p_sample(
             self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None,
-            return_attn_weights=False,
+            return_attn_weights=False, use_gradient_method=False,
     ):
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -392,6 +411,7 @@ class GaussianDiffusion:
             denoised_fn=denoised_fn,
             model_kwargs=model_kwargs,
             return_attn_weights=return_attn_weights,
+            use_gradient_method=use_gradient_method,
         )
         noise = th.randn_like(x)
         nonzero_mask = (
@@ -413,6 +433,7 @@ class GaussianDiffusion:
         device=None,
         progress=False,
         return_attn_weights=False,
+        use_gradient_method=False,
     ):
         """
         Generate samples from the model.
@@ -444,6 +465,7 @@ class GaussianDiffusion:
             device=device,
             progress=progress,
             return_attn_weights=return_attn_weights,
+            use_gradient_method=use_gradient_method,
         )):
             if return_attn_weights:
                 t = self.num_timesteps - neg_t - 1
@@ -482,6 +504,7 @@ class GaussianDiffusion:
         device=None,
         progress=False,
         return_attn_weights=False,
+        use_gradient_method=False,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -517,6 +540,7 @@ class GaussianDiffusion:
                     denoised_fn=denoised_fn,
                     model_kwargs=model_kwargs,
                     return_attn_weights=return_attn_weights,
+                    use_gradient_method=use_gradient_method,
                 )
                 yield out
                 img = out["sample"]

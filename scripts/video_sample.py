@@ -49,7 +49,7 @@ def get_masks(x0, num_obs):
 
 @torch.no_grad()
 def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
-                step_size=1, optimal_schedule_path=None):
+                step_size=1, optimal_schedule_path=None, use_gradient_method=False):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -102,7 +102,9 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
                               x0=x0,
                               obs_mask=obs_mask,
                               latent_mask=latent_mask,
-                              kinda_marg_mask=kinda_marg_mask),
+                              kinda_marg_mask=kinda_marg_mask,
+                              use_gradient_method=use_gradient_method,
+                              ),
             latent_mask=latent_mask,
             return_attn_weights=False)
         # Fill in the generated frames
@@ -230,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_partition", default="test", choices=["train", "test", "variable_length"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
+    parser.add_argument("--use_gradient_method", action='store_true')
     parser.add_argument("--inference_mode", required=True, choices=inference_util.inference_strategies.keys())
     parser.add_argument("--max_frames", type=int, default=None,
                         help="Maximum number of video frames (observed or latent) allowed to pass to the model at once. Defaults to what the model was trained with.")
