@@ -352,7 +352,7 @@ class GaussianDiffusion:
                 #print(th.norm((pred_xstart - model_kwargs['x0']) * obs_mask))
                 #print(th.norm((pred_xstart - model_kwargs['x0']) * (1-obs_mask)))
                 #print('pixelwise diff', (pred_xstart - model_kwargs['x0']))
-                weighting_factor = 2.
+                weighting_factor = 1.
                 alphas = th.tensor(1 - self.betas).to(t.device)
                 alpha_t = alphas[t[0].cpu().item()]
                 model_mean = model_mean - weighting_factor * alpha_t * g / 2
