@@ -103,10 +103,11 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
                               obs_mask=obs_mask,
                               latent_mask=latent_mask,
                               kinda_marg_mask=kinda_marg_mask,
-                              use_gradient_method=use_gradient_method,
                               ),
             latent_mask=latent_mask,
-            return_attn_weights=False)
+            return_attn_weights=False,
+            use_gradient_method=use_gradient_method,
+            )
         # Fill in the generated frames
         if 'adaptive' in mode:
             n_obs = len(obs_frame_indices[0])
