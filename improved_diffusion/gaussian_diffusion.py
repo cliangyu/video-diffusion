@@ -266,10 +266,10 @@ class GaussianDiffusion:
 
         print('at start', model_kwargs['obs_mask'].sum())
 
+        new_model_kwargs = {k: v for k, v in model_kwargs.items()}
         if use_gradient_method:
             x.requires_grad_(True)
             obs_mask = model_kwargs['obs_mask']
-            new_model_kwargs = {k: v for k, v in model_kwargs.items()}
             new_model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
             new_model_kwargs['latent_mask'] = obs_mask + model_kwargs['latent_mask']
 
