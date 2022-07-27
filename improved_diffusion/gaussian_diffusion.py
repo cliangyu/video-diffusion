@@ -341,12 +341,12 @@ class GaussianDiffusion:
             if use_gradient_method:
                 pixelwise_diff_to_obs = (pred_xstart - model_kwargs['x0']) * obs_mask
                 obs_mismatch = (pixelwise_diff_to_obs**2).sum()
-                print('this should be none:', x.grad)
                 obs_mismatch.backward()
                 g = x.grad
-                weighting_factor = 2.
-                alphas = 1 - self.betas
-                alpha_t = alphas[t].view(-1, 1, 1, 1, 1)
+                print(g)
+                weighting_factor = 10.
+                alphas = th.tensor(1 - self.betas).to(t.device)
+                alpha_t = alphas[t[0].cpu().item()]
                 model_mean = model_mean - weighting_factor * alpha_t * g / 2
 
         return {
