@@ -264,6 +264,8 @@ class GaussianDiffusion:
         if model_kwargs is None:
             model_kwargs = {}
 
+        print('at start', model_kwargs['obs_mask'].sum())
+
         if use_gradient_method:
             x.requires_grad_(True)
             model_kwargs['latent_mask'] = model_kwargs['latent_mask'] + model_kwargs['obs_mask']
@@ -345,7 +347,10 @@ class GaussianDiffusion:
                 g = x.grad
                 print('grad sum', (g**2).sum())
                 print('mismatch', obs_mismatch)
-                print('pixelwise diff', (pred_xstart - model_kwargs['x0']))
+                print('obs mask', obs_mask.sum())
+                print(th.norm((pred_xstart - model_kwargs['x0']) * obs_mask))
+                print(th.norm((pred_xstart - model_kwargs['x0']) * (1-obs_mask)))
+                #print('pixelwise diff', (pred_xstart - model_kwargs['x0']))
                 weighting_factor = 10.
                 alphas = th.tensor(1 - self.betas).to(t.device)
                 alpha_t = alphas[t[0].cpu().item()]
