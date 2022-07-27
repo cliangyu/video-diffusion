@@ -267,7 +267,7 @@ class GaussianDiffusion:
         if use_gradient_method:
             x.requires_grad_(True)
             obs_mask = model_kwargs['obs_mask']
-            model_kwargs['obs_mask'] = torch.zeros_like(obs_mask)
+            model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
 
         with th.enable_grad() if use_gradient_method else th.no_grad():
             B, C = x.shape[:2]
@@ -342,7 +342,9 @@ class GaussianDiffusion:
                 obs_mismatch = (pixelwise_diff_to_obs**2).sum()
                 obs_mismatch.backward()
                 g = x.grad
-                print(g)
+                print('grad sum', (g**2).sum())
+                print('mismatch', obs_mismatch)
+                print('pixelwise diff', (pred_xstart - model_kwargs['x0']))
                 weighting_factor = 10.
                 alphas = th.tensor(1 - self.betas).to(t.device)
                 alpha_t = alphas[t[0].cpu().item()]
