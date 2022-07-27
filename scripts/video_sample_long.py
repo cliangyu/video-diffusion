@@ -93,7 +93,9 @@ def infer_step(model, diffusion, video, args):
                               latent_mask=latent_mask,
                               kinda_marg_mask=kinda_marg_mask),
             latent_mask=latent_mask,
-            return_attn_weights=False)
+            return_attn_weights=False,
+            use_gradient_method=args.use_gradient_method,
+        )
         # Fill in the generated frames
         samples[:, lat_indices] = local_samples[:, -n_latent:].cpu()
     # Drop the batch dimension and the first few observed frames
@@ -115,6 +117,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--out", default=None)
     parser.add_argument("--unconditional", action="store_true")
     # Inference arguments
+    parser.add_argument("--use_gradient_method", action='store_true')
     parser.add_argument("--use_ddim", type=str2bool, default=False)
     parser.add_argument("--timestep_respacing", type=str, default="")
     args = parser.parse_args()

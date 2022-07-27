@@ -49,7 +49,7 @@ def get_masks(x0, num_obs):
 
 @torch.no_grad()
 def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
-                step_size=1, optimal_schedule_path=None, use_gradient_method=False):
+                step_size=1, optimal_schedule_path=None, *, use_gradient_method):
     """
     batch has a shape of BxTxCxHxW where
     B: batch size
@@ -118,7 +118,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     return samples.numpy()
 
 
-def main(args, model, diffusion, dataloader, dataset_indices=None):
+def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indices=None):
     optimal_schedule_path = None if args.optimality is None else args.eval_dir / "optimal_schedule.pt"
     dataset_idx_translate = lambda idx: idx if dataset_indices is None else dataset_indices[idx]
     # Generate and store samples
@@ -136,7 +136,8 @@ def main(args, model, diffusion, dataloader, dataset_indices=None):
                 batch = batch.to(args.device)
                 recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                     batch=batch, max_frames=args.max_frames, obs_length=args.obs_length,
-                                    step_size=args.step_size, optimal_schedule_path=optimal_schedule_path)
+                                    step_size=args.step_size, optimal_schedule_path=optimal_schedule_path,
+                                    use_gradient_method=use_gradient_method)
                 recon = (recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
                 for i in range(batch_size):
@@ -335,4 +336,4 @@ if __name__ == "__main__":
         print(f"Saved model config at {json_path}")
 
     # Generate the samples
-    main(args, model, diffusion, dataloader, dataset_indices=args.indices)
+    main(args, model, diffusion, dataloader, dataset_indices=args.indices, use_gradient_method=args.use_gradient_method)
