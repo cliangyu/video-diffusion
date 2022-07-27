@@ -266,16 +266,17 @@ class GaussianDiffusion:
 
         if use_gradient_method:
             x.requires_grad_(True)
-            model_kwargs['latent_mask'] = model_kwargs['latent_mask'] + model_kwargs['obs_mask']
             obs_mask = model_kwargs['obs_mask']
-            model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
+            new_model_kwargs = {k: v for k, v in model_kwargs.items()}
+            new_model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
+            new_model_kwargs['latent_mask'] = obs_mask + model_kwargs['latent_mask']
 
         with th.enable_grad() if use_gradient_method else th.no_grad():
             B, C = x.shape[:2]
             assert t.shape == (B,)
             model_output, attn_weights = model(
                 x, self._scale_timesteps(t), return_attn_weights=return_attn_weights,
-                **model_kwargs
+                **new_model_kwargs
             )
 
             if self.model_var_type in [ModelVarType.LEARNED, ModelVarType.LEARNED_RANGE]:
