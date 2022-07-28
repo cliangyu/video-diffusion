@@ -206,7 +206,7 @@ class TrainLoop:
     def sample_some_indices(self, max_indices, T):
         s = th.randint(low=1, high=max_indices+1, size=())
         max_scale = T / (s-0.999)
-        if self.mask_distribution in ["differently-spaced-groups", "differently-spaced-groups-no-marg"] or 'linspace' in self.mask_distribution:
+        if self.mask_distribution in ["one-group", "differently-spaced-groups", "differently-spaced-groups-no-marg"] or 'linspace' in self.mask_distribution:
             scale = np.exp(np.random.rand() * np.log(max_scale))
         elif self.mask_distribution == "consecutive-groups":
             scale = 1
@@ -260,8 +260,10 @@ class TrainLoop:
             elif self.mask_distribution == "one-group":
                 indices = self.sample_some_indices(max_indices=N, T=T)
                 n_obs = np.random.randint(0, len(indices), size=())
-                obs_row[indices[:n_obs]] = 1.
-                latent_row[indices[n_obs:]] = 1.
+                obs_indices = np.random.choice(indices, size=n_obs)
+                obs_row[obs_indices] = 1.
+                latent_indices = np.setdiff1d(indices, obs_indices)
+                latent_row[latent_indices] = 1.
             elif 'groups' in self.mask_distribution:
                 latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
                 while True:
