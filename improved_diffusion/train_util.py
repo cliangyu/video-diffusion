@@ -257,6 +257,11 @@ class TrainLoop:
                     indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=T))
                     obs_row[indices] = 1.
                 latent_row += 1 - obs_row
+            elif self.mask_distribution == "one-group":
+                indices = self.sample_some_indices(max_indices=N, T=T)
+                n_obs = np.random.randint(0, len(indices), size=())
+                obs_row[indices[:n_obs]] = 1.
+                latent_row[indices[n_obs:]] = 1.
             elif 'groups' in self.mask_distribution:
                 latent_row[self.sample_some_indices(max_indices=N, T=T)] = 1.
                 while True:
