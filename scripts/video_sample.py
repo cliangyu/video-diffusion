@@ -232,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--eval_dir", default=None, help="Path to the evaluation directory for the given checkpoint. If None, defaults to resutls/<checkpoint_dir_subset>/<checkpoint_name>.")
     parser.add_argument("--dataset_partition", default="test", choices=["train", "test", "variable_length"])
+    parser.add_argument("--override_dataset", default=None, type=str, help="Specify dataset to use different from the one used to train the model.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     # Inference arguments
     parser.add_argument("--use_gradient_method", action='store_true')
@@ -271,6 +272,8 @@ if __name__ == "__main__":
     model_args = data["config"]
     model_args.update({"use_ddim": args.use_ddim,
                        "timestep_respacing": args.timestep_respacing})
+    if args.override_dataset is not None:
+        model_args["dataset"] = args.override_dataset
     # Update model parameters, if needed, to enable backward compatibility
     for k, v in default_model_configs.items():
         if k not in model_args:

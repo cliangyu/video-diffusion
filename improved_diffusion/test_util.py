@@ -117,6 +117,8 @@ def get_eval_run_identifier(args):
         res = "trainset_" + res
     if hasattr(args, "use_gradient_method") and args.use_gradient_method:
         res = "gradientmethod_" + res
+    if hasattr(args, "override_dataset") and args.override_dataset is not None:
+        res = f"{args.override_dataset}_" + res
     return res
 
 

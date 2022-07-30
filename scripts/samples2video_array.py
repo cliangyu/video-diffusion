@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import uuid
 
-from improved_diffusion.image_datasets import get_test_dataset
+from improved_diffusion.image_datasets import get_test_dataset, get_train_dataset
 from improved_diffusion.test_util import mark_as_observed, tensor2gif, tensor2mp4, tensor2avi
 
 
@@ -15,6 +15,7 @@ if __name__ == "__main__":
     parser.add_argument("--samples_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, default=None)
     parser.add_argument("--dataset", type=str, default=None)
+    parser.add_argument("--dataset_partition", default="test", choices=["train", "test", "variable_length"])
     parser.add_argument("--do_n", type=int, default=5)
     parser.add_argument("--n_seeds", type=int, default=3)
     parser.add_argument("--obs_length", type=int, default=0, help="Number of observed images. If positive, marks the first obs_length frames in output gifs by a red border.")
@@ -22,15 +23,15 @@ if __name__ == "__main__":
     parser.add_argument("--no_gt", action='store_true')
     args = parser.parse_args()
 
-    dataset = get_test_dataset(args.dataset)
+    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset)
     out_dir = Path(args.out_dir) if args.out_dir is not None else Path(args.samples_dir).parent / "video_arrays"
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
-    method = args.samples_dir.split('/')[-3].split('_')[0]
-    out_path = out_dir / f"{args.dataset}_{method}_{args.do_n}_{args.n_seeds}_{args.obs_length}.{args.format}"
+    dirname = args.samples_dir.split('/')[-3]
+    out_path = out_dir / f"{args.dataset}_{dirname}_{args.do_n}_{args.n_seeds}_{args.obs_length}.{args.format}"
 
     videos = []
-    for video_i in [5, 17, 18, 10, 15]:  # range(args.do_n):
+    for video_i in range(args.do_n):  #[5, 17, 18, 10, 15]:  # range(args.do_n):
         data_idx = video_i
         gt_drange = [-1, 1]
         gt_video, _ = dataset[data_idx]

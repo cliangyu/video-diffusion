@@ -25,6 +25,7 @@ video_data_paths_dict = {
     "bouncy_balls": "datasets/bouncing_balls_100",
     "carla_with_traffic": "datasets/carla/with-traffic",
     "carla_no_traffic": "datasets/carla/no-traffic",
+    "carla_town02_no_traffic":  "datasets/carla/town02-no-traffic",
     "carla_no_traffic_variable_length": "datasets/carla/no-traffic-variable-length",
 }
 
@@ -35,6 +36,7 @@ default_T_dict = {
     "bouncy_balls": 100,
     "carla_with_traffic": 1000,
     "carla_no_traffic": 1000,
+    "carla_town02_no_traffic": 1000,
 }
 
 default_image_size_dict = {
@@ -44,6 +46,7 @@ default_image_size_dict = {
     "bouncy_balls": 32,
     "carla_with_traffic": 128,
     "carla_no_traffic": 128,
+    "carla_town02_no_traffic": 128,
 }
 
 
@@ -119,7 +122,7 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
         dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
-    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic", "carla_town02_no_traffic"]:
         dataset = CarlaDataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name == "bouncy_balls":
         data_path = os.path.join(data_path, "train.pt")
@@ -148,7 +151,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "test")
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
-    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic", "carla_town02_no_traffic"]:
         dataset = CarlaDataset(train=False, path=data_path, shard=0, num_shards=1, T=T)
     else:
         raise Exception("no dataset", dataset_name)
@@ -175,7 +178,7 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     elif dataset_name == "mazes":
         data_path = os.path.join(data_path, "train")
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
-    elif dataset_name in ["carla_no_traffic", "carla_with_traffic"]:
+    elif dataset_name in ["carla_no_traffic", "carla_with_traffic", "carla_town02_no_traffic"]:
         dataset = CarlaDataset(train=True, path=data_path, shard=0, num_shards=1, T=T)
     elif dataset_name == "mazes_cwvae":
         data_path = os.path.join(data_path, "train")
