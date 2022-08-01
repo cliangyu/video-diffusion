@@ -440,11 +440,8 @@ class RPEAttention(nn.Module):
                 # allowed_interactions[:, range(T), range(T)] = 1.
                 if allow_interactions_between_padding:
                     allowed_interactions += (1-attn_mask.view(B, 1, T)) * (1-attn_mask.view(B, T, 1))
-                    print('old thing')
                 else:
                     allowed_interactions[:, range(T), range(T)] = 1.
-                    print('identity')
-                print(allowed_interactions)
                 inf_mask = (1-allowed_interactions)
                 inf_mask[inf_mask == 1] = th.inf
                 w = w - inf_mask.view(B, 1, 1, T, T)  # BxDxHxTxT
