@@ -211,14 +211,14 @@ class FactorizedAttentionBlock(nn.Module):
     Loosely based on CSDI's factorized attention for time-series data.
     https://openreview.net/pdf?id=VzuIzbRDrum
     """
-    def __init__(self, channels, num_heads, use_rpe_net, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', bucket_params=None):
+    def __init__(self, channels, num_heads, use_rpe_net, time_embed_dim=None, use_checkpoint=False, temporal_augment_type='none', bucket_params=None, allow_interactions_between_padding=False):
         super().__init__()
         self.spatial_attention = RPEAttention(
             channels=channels, num_heads=num_heads,
             use_rpe_q=False, use_rpe_k=False, use_rpe_v=False)
         self.temporal_attention = RPEAttention(
             channels=channels, num_heads=num_heads, bucket_params=bucket_params,
-            time_embed_dim=time_embed_dim, use_rpe_net=use_rpe_net,
+            time_embed_dim=time_embed_dim, use_rpe_net=use_rpe_net, allow_interactions_between_padding=allow_interactions_between_padding,
         )
 
     def forward(self, x, attn_mask, temb, T, attn_weights_list=None, frame_indices=None):
@@ -360,6 +360,7 @@ class RPEAttention(nn.Module):
     def __init__(self, channels, num_heads, use_checkpoint=False,
                  bucket_params=None, time_embed_dim=None, use_rpe_net=None,
                  use_rpe_q=True, use_rpe_k=True, use_rpe_v=True,
+                 allow_interactions_between_padding=True,
                  ):
         super().__init__()
         self.num_heads = num_heads
@@ -371,6 +372,7 @@ class RPEAttention(nn.Module):
         self.qkv = nn.Linear(channels, channels * 3)
         self.proj_out = zero_module(nn.Linear(channels, channels))
         self.norm = normalization(channels)
+        self.allow_interactions_between_padding = allow_interactions_between_padding
 
         if use_rpe_q or use_rpe_k or use_rpe_v:
             assert bucket_params is not None
@@ -432,17 +434,23 @@ class RPEAttention(nn.Module):
         if self.rpe_q is not None:
             attn += self.rpe_q(k * self.scale, pairwise_distances, temb=temb, mode="qk").transpose(-1, -2)
 
-        def softmax(w, attn_mask):
+        def softmax(w, attn_mask, allow_interactions_between_padding):
             if attn_mask is not None:
                 allowed_interactions = attn_mask.view(B, 1, T) * attn_mask.view(B, T, 1)  # locations in video attend to all other locations in video
                 # allowed_interactions[:, range(T), range(T)] = 1.
-                allowed_interactions += (1-attn_mask.view(B, 1, T)) * (1-attn_mask.view(B, T, 1))
+                if allow_interactions_between_padding:
+                    allowed_interactions += (1-attn_mask.view(B, 1, T)) * (1-attn_mask.view(B, T, 1))
+                    print('old thing')
+                else:
+                    allowed_interactions[:, range(T), range(T)] = 1.
+                    print('identity')
+                print(allowed_interactions)
                 inf_mask = (1-allowed_interactions)
                 inf_mask[inf_mask == 1] = th.inf
                 w = w - inf_mask.view(B, 1, 1, T, T)  # BxDxHxTxT
             return th.softmax(w.float(), dim=-1).type(w.dtype)
 
-        attn = softmax(attn, attn_mask)
+        attn = softmax(attn, attn_mask, self.allow_interactions_between_padding)
 
         out = attn @ v
 
@@ -500,6 +508,7 @@ class UNetModel(nn.Module):
         temporal_augment_type=None,
         use_rpe_net=False,
         bucket_params=None,
+        allow_interactions_between_padding=False,
     ):
         super().__init__()
 
@@ -562,7 +571,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, use_rpe_net=use_rpe_net, time_embed_dim=time_embed_dim,
                                                  use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                                 bucket_params=bucket_params)
+                                                 bucket_params=bucket_params, allow_interactions_between_padding=allow_interactions_between_padding)
                     )
                 self.input_blocks.append(TimestepEmbedAttnThingsSequential(*layers))
                 input_block_chans.append(ch)
@@ -599,7 +608,7 @@ class UNetModel(nn.Module):
             ),
             FactorizedAttentionBlock(ch, num_heads=num_heads, use_rpe_net=use_rpe_net, time_embed_dim=time_embed_dim,
                                      use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                     bucket_params=bucket_params),
+                                     bucket_params=bucket_params, allow_interactions_between_padding=allow_interactions_between_padding),
             ResBlock(
                 ch,
                 time_embed_dim,
@@ -629,7 +638,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         FactorizedAttentionBlock(ch, num_heads=num_heads, use_rpe_net=use_rpe_net, time_embed_dim=time_embed_dim,
                                                  use_checkpoint=use_checkpoint, temporal_augment_type=temporal_augment_type,
-                                                 bucket_params=bucket_params),
+                                                 bucket_params=bucket_params, allow_interactions_between_padding=allow_interactions_between_padding),
                     )
                 if level and i == num_res_blocks:
                     layers.append(Upsample(ch, conv_resample, dims=dims))
