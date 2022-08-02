@@ -451,6 +451,8 @@ def add_dict_to_argparser(parser, default_dict):
 
 
 def args_to_dict(args, keys):
+    if 'allow_interactions_between_padding' not in args:
+        args['allow_interactions_between_padding'] = True
     return {k: getattr(args, k) for k in keys}
 
 
