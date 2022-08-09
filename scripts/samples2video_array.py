@@ -23,7 +23,8 @@ if __name__ == "__main__":
     parser.add_argument("--no_gt", action='store_true')
     args = parser.parse_args()
 
-    dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset)
+    if not args.no_gt:
+        dataset = locals()[f"get_{args.dataset_partition}_dataset"](dataset_name=args.dataset)
     out_dir = Path(args.out_dir) if args.out_dir is not None else Path(args.samples_dir).parent / "video_arrays"
     out_dir.mkdir(exist_ok=True)
     random_str = uuid.uuid4()
@@ -31,14 +32,15 @@ if __name__ == "__main__":
     out_path = out_dir / f"{args.dataset}_{dirname}_{args.do_n}_{args.n_seeds}_{args.obs_length}.{args.format}"
 
     videos = []
-    for video_i in range(args.do_n):  #[5, 17, 18, 10, 15]:  # range(args.do_n):
-        data_idx = video_i
-        gt_drange = [-1, 1]
-        gt_video, _ = dataset[data_idx]
-        gt_video = gt_video.numpy()
-        gt_video = (gt_video - gt_drange[0]) / (gt_drange[1] - gt_drange[0])  * 255
-        gt_video = gt_video.astype(np.uint8)
-        mark_as_observed(gt_video)
+    for video_i in range(args.do_n):  # [5, 17, 18, 10, 15]
+        if not args.no_gt:
+            data_idx = video_i
+            gt_drange = [-1, 1]
+            gt_video, _ = dataset[data_idx]
+            gt_video = gt_video.numpy()
+            gt_video = (gt_video - gt_drange[0]) / (gt_drange[1] - gt_drange[0])  * 255
+            gt_video = gt_video.astype(np.uint8)
+            mark_as_observed(gt_video)
         videos.append([] if args.no_gt else [gt_video])
         seed = 0
         done = 0
