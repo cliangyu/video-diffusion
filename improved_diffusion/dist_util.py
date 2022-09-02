@@ -87,6 +87,7 @@ def setup_dist():
     elif 'SLURM_PROCID' in os.environ:
         rank = int(os.environ['SLURM_PROCID'])
         gpu = rank % torch.cuda.device_count()
+        world_size = torch.cuda.device_count()
     else:
         print('Not using distributed mode')
         setup_for_distributed(is_master=True)  # hack
