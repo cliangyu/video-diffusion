@@ -411,7 +411,7 @@ class GaussianDiffusion:
                  - 'sample': a random sample from the model.
                  - 'pred_xstart': a prediction of x_0.
         """
-        out = self.p_mean_variance(
+        out = self.p_mean_variance( # input x=x_t, output x_{t-1}
             model,
             x,
             t,
@@ -425,7 +425,7 @@ class GaussianDiffusion:
         nonzero_mask = (
             (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
         )  # no noise when t == 0
-        sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
+        sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise # Add noise to x_{t-1}, why??
         return {"sample": sample, "pred_xstart": out["pred_xstart"],
                 "attn": out["attn"], }
 
@@ -539,6 +539,7 @@ class GaussianDiffusion:
 
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
+            model_kwargs['x_t_minus_1'] = self.q_sample(model_kwargs['x0'], (t-1), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
             with th.no_grad():
                 out = self.p_sample(
                     model,
@@ -770,6 +771,7 @@ class GaussianDiffusion:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
+        model_kwargs['x_t_minus_1'] = self.q_sample(x_start, (t-1), noise=noise)
         x_t = self.q_sample(x_start, t, noise=noise)
 
         terms = {}

@@ -11,4 +11,5 @@ tmp
 *.egg-info
 .DS_Store
 __pycache__/
-
+.vscode
+carla/

@@ -83,8 +83,10 @@ def load_data(
         image_size,
         all_files,
         classes=classes,
-        shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
-        num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
+        shard=torch.distributed.get_rank() if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+        num_shards=torch.cuda.device_count() if NO_MPI else MPI.COMM_WORLD.Get_size(),
+        # shard=0 if NO_MPI else MPI.COMM_WORLD.Get_rank(),
+        # num_shards=1 if NO_MPI else MPI.COMM_WORLD.Get_size(),
     )
     if deterministic:
         loader = DataLoader(
@@ -106,8 +108,10 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
 
     if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "":
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
-    shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
-    num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
+    # shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
+    # num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
+    shard=torch.distributed.get_rank() if NO_MPI else MPI.COMM_WORLD.Get_rank()
+    num_shards=torch.cuda.device_count() if NO_MPI else MPI.COMM_WORLD.Get_size()
     def get_loader(dataset):
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True

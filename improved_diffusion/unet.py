@@ -815,10 +815,18 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
             indicator_template = th.ones_like(x[:, :, :1, :, :])
             obs_indicator = indicator_template * obs_mask
             kinda_marg_indicator = indicator_template * kinda_marg_mask
-            x = th.cat([x*latent_mask + x0*obs_mask + x*(1-anything_mask),
+            observed_dict = {
+                'x_0': x0, # case 1
+                'x_t': x, # case 2
+                'x_t_minus_1': kwargs['x_t_minus_1'], # case 3
+            }
+            observed_frames = observed_dict[kwargs['observed_frames']]
+            x = th.cat([x*latent_mask + observed_frames*obs_mask + x*(1-anything_mask), # case 3: use y_(t-1) and x_t
                         obs_indicator,
                         kinda_marg_indicator],
                        dim=2)
+            if 'x_t_minus_1' in kwargs: 
+                del kwargs['x_t_minus_1']
         elif self.cond_emb_type in ['duplicate', 'all']:
             x = th.cat([x*latent_mask + x*(1-anything_mask),
                         x0*obs_mask],

@@ -1,11 +1,13 @@
 """
 Helpers for distributed training.
 """
+import builtins
+import datetime
 
 import io
 import os
 import socket
-
+import torch
 import blobfile as bf
 NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
@@ -21,35 +23,88 @@ GPUS_PER_NODE = th.cuda.device_count()
 SETUP_RETRY_COUNT = 3
 
 
+# def setup_dist():
+#     """
+#     Setup a distributed process group.
+#     """
+#     if NO_MPI:
+#         return
+#     if dist.is_initialized():
+#         return
+
+#     backend = "gloo" if not th.cuda.is_available() else "nccl"
+#     comm = MPI.COMM_WORLD
+
+#     if backend == "gloo":
+#         hostname = "localhost"
+#     else:
+#         hostname = socket.gethostbyname(socket.getfqdn())
+#     os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
+#     os.environ["RANK"] = str(comm.rank)
+#     os.environ["WORLD_SIZE"] = str(comm.size)
+
+#     print('setting up world')
+#     print("RANK", comm.rank)
+#     print("SIZE", comm.size)
+
+#     port = comm.bcast(_find_free_port(), root=0)
+#     os.environ["MASTER_PORT"] = str(port)
+#     dist.init_process_group(backend=backend, init_method="env://")
+
+def get_world_size():
+    if not is_dist_avail_and_initialized():
+        return 1
+    return dist.get_world_size()
+
+def is_dist_avail_and_initialized():
+    if not dist.is_available():
+        return False
+    if not dist.is_initialized():
+        return False
+    return True
+
+def setup_for_distributed(is_master):
+    """
+    This function disables printing when not in master process
+    """
+    builtin_print = builtins.print
+
+    def print(*args, **kwargs):
+        force = kwargs.pop('force', False)
+        force = force or (get_world_size() > 8)
+        if is_master or force:
+            now = datetime.datetime.now().time()
+            builtin_print('[{}] '.format(now), end='')  # print with time stamp
+            builtin_print(*args, **kwargs)
+
+    builtins.print = print
+
 def setup_dist():
-    """
-    Setup a distributed process group.
-    """
-    if NO_MPI:
-        return
-    if dist.is_initialized():
-        return
-
-    backend = "gloo" if not th.cuda.is_available() else "nccl"
-    comm = MPI.COMM_WORLD
-
-    if backend == "gloo":
-        hostname = "localhost"
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ['WORLD_SIZE'])
+        gpu = int(os.environ['LOCAL_RANK'])
+    elif 'SLURM_PROCID' in os.environ:
+        rank = int(os.environ['SLURM_PROCID'])
+        gpu = rank % torch.cuda.device_count()
     else:
-        hostname = socket.gethostbyname(socket.getfqdn())
-    os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
-    os.environ["RANK"] = str(comm.rank)
-    os.environ["WORLD_SIZE"] = str(comm.size)
+        print('Not using distributed mode')
+        setup_for_distributed(is_master=True)  # hack
+        distributed = False
+        return
 
-    print('setting up world')
-    print("RANK", comm.rank)
-    print("SIZE", comm.size)
+    distributed = True
 
-    port = comm.bcast(_find_free_port(), root=0)
-    os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend=backend, init_method="env://")
-
-
+    torch.cuda.set_device(gpu)
+    dist_backend = 'nccl'
+    dist_url = "env://"
+    print('| distributed init (rank {}): {}, gpu {}'.format(
+        rank, dist_url, gpu), flush=True)
+    torch.distributed.init_process_group(backend=dist_backend, init_method=dist_url,
+                                         world_size=world_size, rank=rank)
+    torch.distributed.barrier()
+    setup_for_distributed(rank == 0)
+    
 def dev():
     """
     Get the device to use for torch.distributed.

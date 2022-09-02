@@ -111,6 +111,7 @@ def main():
         T=args.T,
         mask_distribution=args.mask_distribution,
         pad_with_random_frames=args.pad_with_random_frames,
+        observed_frames=args.observed_frames,
         args=args,
     )
     if args.just_visualise:
@@ -152,6 +153,7 @@ def create_argparser():
         num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,
         fake_seed=1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed
+        observed_frames='x_t_minus_1',  # the input of observed frames, case 1: 'x_0', case 2: 'x_t', case 3: 'x_t_minus_1'
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

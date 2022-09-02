@@ -62,6 +62,7 @@ class TrainLoop:
         n_interesting_masks=3,
         mask_distribution="differently-spaced-groups",
         pad_with_random_frames=True,
+        observed_frames='x_t_minus_1',
         args=None
     ):
         print('\n\n RUNNING INIT TRAIN LOOP WITH RANK',  dist.get_rank(), '\n\n')
@@ -100,6 +101,7 @@ class TrainLoop:
         self.master_params = self.model_params
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
         self.sync_cuda = th.cuda.is_available()
+        self.observed_frames = observed_frames
 
         self._load_and_sync_parameters()
         if self.use_fp16:
@@ -226,7 +228,7 @@ class TrainLoop:
         N = self.max_frames
         B, T, *_ = batch1.shape
         masks = {k: th.zeros_like(batch1[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
-        for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]):
+        for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]): # for each video
             if 'autoregressive' in self.mask_distribution:
                 n_obs = int(self.mask_distribution.split('-')[1])
                 n_latent = self.max_frames - n_obs
@@ -373,7 +375,7 @@ class TrainLoop:
                 t,
                 model_kwargs={'frame_indices': frame_indices, 'obs_mask': obs_mask,
                               'latent_mask': latent_mask, 'kinda_marg_mask': kinda_marg_mask,
-                              'x0': micro},
+                              'x0': micro, 'observed_frames': self.observed_frames},
                 latent_mask=loss_mask,
                 eval_mask=latent_mask,
             )
@@ -535,6 +537,35 @@ class TrainLoop:
         attns = []
         def chunk(t):
             return th.chunk(t, dim=0, chunks=self.n_valid_batches*self.n_valid_repeats)
+       
+       
+        # device = next(self.model.parameters()).device
+        # indices = list(range(self.diffusion.num_timesteps))[::-1]
+        
+        # img = {}
+        # for i in indices:
+        #     t = th.tensor([i] * 1, device=device)
+        #     for chunk_idx, (x0, fi, om, lm, kmm) in enumerate(zip(*map(
+        #         chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask]))):
+        #         with th.no_grad():
+        #             out = self.diffusion.p_sample(
+        #                 self.model,
+        #                 img=th.randn(x0.shape, device=device) if chunk_idx not in img else img[chunk_idx],
+        #                 t=t,
+        #                 clip_denoised=True,
+        #                 model_kwargs={
+        #                     'frame_indices': fi,
+        #                     'x0': x0, 'obs_mask': om,
+        #                     'latent_mask': lm,
+        #                     'kinda_marg_mask': kmm},                        
+        #                 return_attn_weights=True,
+        #             )
+        #             yield out
+        #             img[chunk_idx] = out["sample"]
+        
+        
+        
+        
         for x0, fi, om, lm, kmm in zip(*map(
                 chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])):
             s, a = sample_fn(
@@ -545,7 +576,8 @@ class TrainLoop:
                     'frame_indices': fi,
                     'x0': x0, 'obs_mask': om,
                     'latent_mask': lm,
-                    'kinda_marg_mask': kmm},
+                    'kinda_marg_mask': kmm,
+                    'observed_frames': self.observed_frames},
                 latent_mask=lm,
                 return_attn_weights=True,
             )
