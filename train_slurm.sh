@@ -17,4 +17,6 @@ python -m torch.distributed.run \
   --dataset carla_no_traffic \
   --batch_size 1 \
   --max_frames 20 \
-  --sample_interval 100
+  --sample_interval 100 \
+  --resume_id cov6ry02 \
+  --resume_checkpoint checkpoints/cov6ry02/model_000000.pt

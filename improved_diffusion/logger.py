@@ -168,7 +168,7 @@ class WandbOutputFormat(KVWriter, SeqWriter):
                project="FlexDiff",
                entity="liangyu",
                job_type="CleanRepo",
-               config=config, dir=wandb_dir
+               config=config, dir=wandb_dir, **wandb_kwargs
                )
             print(f"Wandb run id: {wandb.run.id}")
             num_nodes = 1
