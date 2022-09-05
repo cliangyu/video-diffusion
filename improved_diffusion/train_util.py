@@ -537,34 +537,6 @@ class TrainLoop:
         attns = []
         def chunk(t):
             return th.chunk(t, dim=0, chunks=self.n_valid_batches*self.n_valid_repeats)
-       
-       
-        # device = next(self.model.parameters()).device
-        # indices = list(range(self.diffusion.num_timesteps))[::-1]
-        
-        # img = {}
-        # for i in indices:
-        #     t = th.tensor([i] * 1, device=device)
-        #     for chunk_idx, (x0, fi, om, lm, kmm) in enumerate(zip(*map(
-        #         chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask]))):
-        #         with th.no_grad():
-        #             out = self.diffusion.p_sample(
-        #                 self.model,
-        #                 img=th.randn(x0.shape, device=device) if chunk_idx not in img else img[chunk_idx],
-        #                 t=t,
-        #                 clip_denoised=True,
-        #                 model_kwargs={
-        #                     'frame_indices': fi,
-        #                     'x0': x0, 'obs_mask': om,
-        #                     'latent_mask': lm,
-        #                     'kinda_marg_mask': kmm},                        
-        #                 return_attn_weights=True,
-        #             )
-        #             yield out
-        #             img[chunk_idx] = out["sample"]
-        
-        
-        
         
         for x0, fi, om, lm, kmm in zip(*map(
                 chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])):

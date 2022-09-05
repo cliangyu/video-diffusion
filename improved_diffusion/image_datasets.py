@@ -100,9 +100,10 @@ def load_data(
         yield from loader
 
 
-def load_video_data(dataset_name, batch_size, T=None, image_size=None, deterministic=False, num_workers=1):
+def load_video_data(dataset_name, batch_size, T=None, image_size=None, deterministic=False, num_workers=1, data_path=None):
     # NOTE this is just for loading training data (not test)
-    data_path = video_data_paths_dict[dataset_name]
+    if data_path is None:
+        data_path = video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
 

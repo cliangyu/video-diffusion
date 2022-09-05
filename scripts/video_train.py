@@ -82,7 +82,8 @@ def main():
         dataset_name=args.dataset,
         batch_size=args.batch_size,
         T=args.T,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        data_path=args.data_path,
     )
 
     logger.log("training...")
@@ -154,6 +155,7 @@ def create_argparser():
         pad_with_random_frames=True,
         fake_seed=1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed
         observed_frames='x_t_minus_1',  # the input of observed frames, case 1: 'x_0', case 2: 'x_t', case 3: 'x_t_minus_1'
+        data_path=None,  # assign data path
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
