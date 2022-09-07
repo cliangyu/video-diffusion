@@ -5,6 +5,8 @@ Train a diffusion model on videos.
 import argparse
 import os, sys
 import wandb
+from pathlib import Path
+
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_video_data, default_T_dict, default_image_size_dict
@@ -63,6 +65,8 @@ def main():
     args.rp_beta = int(args.rp_beta)
     args.rp_gamma = int(args.rp_gamma)
     assert args.rp_beta >= args.rp_alpha
+    
+    Path("checkpoints").mkdir(parents=True, exist_ok=True)
 
     dist_util.setup_dist()
     logger.configure(
