@@ -115,7 +115,8 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
     num_shards=torch.cuda.device_count() if NO_MPI else MPI.COMM_WORLD.Get_size()
     def get_loader(dataset):
         return DataLoader(
-            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True
+            dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True,
+            pin_memory=True
         )
     if dataset_name == "minerl":
         data_path = os.path.join(data_path, "train")
