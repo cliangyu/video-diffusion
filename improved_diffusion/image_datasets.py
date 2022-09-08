@@ -385,7 +385,23 @@ class CarlaDataset(MazesDataset):
         self.fnames = [line.rstrip('\n').split('/')[-1] for line in open(self.split_path, 'r').readlines() if '.pt' in line]
         self.fnames = self.fnames[shard::num_shards]
         print(f"Training on {len(self.fnames)} files (Carla dataset).")
-
+        
+        self.videos = []
+        for idx in range(len(self.fnames)):
+            path = self.getitem_path(idx)
+            self.cache_file(path)
+            try:
+                video = self.loaditem(path)
+            except Exception as e:
+                print(f"Failed on loading {path}")
+                raise e
+            video = self.postprocess_video(video)
+            self.videos.append(video)
+        
+    def __getitem__(self, idx):
+        video = self.videos[idx]
+        return self.get_video_subsequence(video, self.T), {}    
+    
     def getitem_path(self, idx):
         return self.path / self.fnames[idx]
 

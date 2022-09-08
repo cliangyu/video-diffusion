@@ -6,7 +6,7 @@ import argparse
 import os, sys
 import wandb
 from pathlib import Path
-
+import torch
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_video_data, default_T_dict, default_image_size_dict
@@ -19,6 +19,8 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion.train_util import TrainLoop
 
+
+torch.backends.cuda.matmul.allow_tf32 = True
 
 os.environ["MY_WANDB_DIR"] = "none"
 if "--unobserve" in sys.argv:
