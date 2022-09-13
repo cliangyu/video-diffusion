@@ -540,6 +540,8 @@ class GaussianDiffusion:
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             model_kwargs['x_t_minus_1'] = self.q_sample(model_kwargs['x0'], (t-1), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
+            model_kwargs['random_t'] = th.randint(max(1, int(t)), (1,)).to('cuda')
+            model_kwargs['x_random'] = self.q_sample(model_kwargs['x0'], model_kwargs['random_t'].to('cuda'), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
             with th.no_grad():
                 out = self.p_sample(
                     model,
@@ -772,6 +774,8 @@ class GaussianDiffusion:
         if noise is None:
             noise = th.randn_like(x_start)
         model_kwargs['x_t_minus_1'] = self.q_sample(x_start, (t-1), noise=noise)
+        model_kwargs['random_t'] = th.randint(max(1, int(t)), (1,)).to('cuda')
+        model_kwargs['x_random'] = self.q_sample(x_start, model_kwargs['random_t'], noise=noise)
         x_t = self.q_sample(x_start, t, noise=noise)
 
         terms = {}

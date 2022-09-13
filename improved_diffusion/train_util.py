@@ -108,6 +108,7 @@ class TrainLoop:
             self._setup_fp16()
 
         self.opt = AdamW(self.master_params, lr=self.lr, weight_decay=self.weight_decay)
+        self.lr_scheduler = th.optim.lr_scheduler.CosineAnnealingWarmRestarts(self.opt, 250000)
         if self.resume_checkpoint:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
@@ -412,6 +413,7 @@ class TrainLoop:
         self._log_grad_norm()
         self._anneal_lr()
         self.opt.step()
+        self.lr_scheduler.step()
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.master_params, rate=rate)
         master_params_to_model_params(self.model_params, self.master_params)
@@ -421,6 +423,7 @@ class TrainLoop:
         self._log_grad_norm()
         self._anneal_lr()
         self.opt.step()
+        self.lr_scheduler.step()
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.master_params, rate=rate)
 
@@ -440,6 +443,7 @@ class TrainLoop:
 
     def log_step(self):
         logger.logkv("step", self.step)
+        logger.logkv("lr", self.lr_scheduler.get_last_lr()[0])
         logger.logkv("samples", (self.step + 1) * self.global_batch)
         if self.use_fp16:
             logger.logkv("lg_loss_scale", self.lg_loss_scale)

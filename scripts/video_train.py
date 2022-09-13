@@ -16,6 +16,7 @@ from improved_diffusion.script_util import (
     create_video_model_and_diffusion,
     args_to_dict,
     add_dict_to_argparser,
+    set_random_seed
 )
 from improved_diffusion.train_util import TrainLoop
 
@@ -53,6 +54,8 @@ def main():
         # Set the number of workers automatically.
         args.num_workers = max(num_available_cores() - 1, 1)
         print(f"num_workers is not specified. It is automatically set to \"number of cores - 1\" = {args.num_workers}")
+        
+    set_random_seed(args.fake_seed, deterministic=True)
 
     video_length = default_T_dict[args.dataset]
     default_T = video_length

@@ -12,9 +12,36 @@ python -m torch.distributed.run \
   --nproc_per_node ${GPU} \
   scripts/video_train.py \
   --dataset carla_no_traffic \
-  --batch_size 1 \
+  --batch_size 2 \
   --max_frames 20 \
-  --sample_interval 10000 \
-  --save_interval 10000 \
   --observed_frames x_0 \
-  --data_path /media/ntu/volume1/home/s121md302_06/data/no-traffic
+  --num_res_blocks 1 \
+  --num_workers 16 \
+  --data_path /workspace/data
+
+  scripts/video_train.py \
+  --dataset carla_no_traffic \
+  --batch_size 2 \
+  --max_frames 20 \
+  --observed_frames x_t_minus_1 \
+  --num_res_blocks 1 \
+  --num_workers 16 \
+  --data_path /workspace/data
+
+  scripts/video_train.py \
+  --dataset carla_no_traffic \
+  --batch_size 2 \
+  --max_frames 20 \
+  --observed_frames x_random \
+  --num_res_blocks 1 \
+  --num_workers 16 \
+  --data_path /workspace/data
+
+    scripts/video_train.py \
+  --dataset carla_no_traffic \
+  --batch_size 2 \
+  --max_frames 20 \
+  --observed_frames x_t \
+  --num_res_blocks 1 \
+  --num_workers 16 \
+  --data_path /workspace/data

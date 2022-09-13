@@ -58,64 +58,77 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     """
     B, T, C, H, W = batch.shape
     samples = torch.zeros_like(batch).cpu()
-    samples[:, :obs_length] = batch[:, :obs_length]
+    samples[:, :obs_length] = batch[:, :obs_length] # Observed frames ground truth
     if 'goal-directed' in mode:
         samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
-    frame_indices_iterator = iter(inference_util.inference_strategies[mode](
+    
+    indices = list(range(diffusion.num_timesteps))[::-1]
+
+    for i in indices:
+        
+        frame_indices_iterator = iter(inference_util.inference_strategies[mode](
         video_length=T, num_obs=obs_length,
         max_frames=max_frames, step_size=step_size,
         optimal_schedule_path=optimal_schedule_path,
         **adaptive_kwargs
-    ))
+        ))
+        
+        while True:
+            if 'adaptive' in mode:
+                frame_indices_iterator.set_videos(samples.to(batch.device))
+            try:
+                obs_frame_indices, latent_frame_indices = next(frame_indices_iterator)
+            except StopIteration:
+                break
+            print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
+            # Prepare network's input
+            if 'adaptive' in mode:
+                frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=1)
+                x0 = torch.stack([samples[i, fi] for i, fi in enumerate(frame_indices)], dim=0).clone()
+                obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices[0]))
+                n_latent = len(latent_frame_indices[0])
+            else:
+                x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone() # retrive ground truth from samples
+                frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
+                obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
+                n_latent = len(latent_frame_indices)
+            # Prepare masks
+            print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
+            print(f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}")
+            print(f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}")
+            
+            print("T="+str(i)+"-" * 40)
+            
+            # print("-" * 40)
+            # Move tensors to the correct device
+            [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
+            
+            # Run the network            
+            local_samples = diffusion.p_sample(
+                model,
+                x0,
+                t=torch.tensor([i] * x0.shape[0], device=next(model.parameters()).device),
+                clip_denoised=True,
+                model_kwargs=dict(frame_indices=frame_indices,
+                                    x0=x0,
+                                    obs_mask=obs_mask,
+                                    latent_mask=latent_mask,
+                                    kinda_marg_mask=kinda_marg_mask,
+                                    x_t_minus_1=x0,
+                                    observed_frames=args.observed_frames,
+                                    ),                    
+                return_attn_weights=False,
+                use_gradient_method=use_gradient_method,
+            )["sample"]
 
-    while True:
-        if 'adaptive' in mode:
-            frame_indices_iterator.set_videos(samples.to(batch.device))
-        try:
-            obs_frame_indices, latent_frame_indices = next(frame_indices_iterator)
-        except StopIteration:
-            break
-        print(f"Conditioning on {sorted(obs_frame_indices)} frames, predicting {sorted(latent_frame_indices)}.\n")
-        # Prepare network's input
-        if 'adaptive' in mode:
-            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=1)
-            x0 = torch.stack([samples[i, fi] for i, fi in enumerate(frame_indices)], dim=0).clone()
-            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices[0]))
-            n_latent = len(latent_frame_indices[0])
-        else:
-            x0 = torch.cat([samples[:, obs_frame_indices], samples[:, latent_frame_indices]], dim=1).clone()
-            frame_indices = torch.cat([torch.tensor(obs_frame_indices), torch.tensor(latent_frame_indices)], dim=0).repeat((B, 1))
-            obs_mask, latent_mask, kinda_marg_mask = get_masks(x0, len(obs_frame_indices))
-            n_latent = len(latent_frame_indices)
-        # Prepare masks
-        print(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
-        print(f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}")
-        print(f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}")
-        print("-" * 40)
-        # Move tensors to the correct device
-        [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
-        # Run the network
-        local_samples, attention_map = diffusion.p_sample_loop(
-            model, x0.shape, clip_denoised=True,
-            model_kwargs=dict(frame_indices=frame_indices,
-                              x0=x0,
-                              obs_mask=obs_mask,
-                              latent_mask=latent_mask,
-                              kinda_marg_mask=kinda_marg_mask,
-                              observed_frames=args.observed_frames,
-                              ),
-            latent_mask=latent_mask,
-            return_attn_weights=False,
-            use_gradient_method=use_gradient_method,
-            )
-        # Fill in the generated frames
-        if 'adaptive' in mode:
-            n_obs = len(obs_frame_indices[0])
-            for i, li in enumerate(latent_frame_indices):
-                samples[i, li] = local_samples[i, n_obs:].cpu()
-        else:
-            samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
+            # Fill in the generated frames
+            if 'adaptive' in mode:
+                n_obs = len(obs_frame_indices[0])
+                for i, li in enumerate(latent_frame_indices):
+                    samples[i, li] = local_samples[i, n_obs:].cpu()
+            else:
+                samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
     return samples.numpy()
 
 
@@ -317,7 +330,7 @@ if __name__ == "__main__":
     print(f"Dataset size (after subsampling according to indices) = {len(dataset)}")
     # Prepare the dataloader
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
-    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args)
+    args.eval_dir = test_util.get_model_results_path(args) / test_util.get_eval_run_identifier(args,postfix='_full')
     args.eval_dir = args.eval_dir
     if args.dataset_partition == "variable_length":
          args.eval_dir = args.eval_dir / "variable_length"

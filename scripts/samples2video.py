@@ -60,6 +60,7 @@ if __name__ == "__main__":
             gt_video = gt_video.numpy()
             gt_video = (gt_video - gt_drange[0]) / (gt_drange[1] - gt_drange[0])  * 255
             gt_video = gt_video.astype(np.uint8)
+            gt_video = gt_video[:video.shape[0],:,:,:]
             video = np.concatenate([video, gt_video], axis=-2)
         # Add a final frame to mark the end of the video
         final_frame = np.zeros_like(video[:1])

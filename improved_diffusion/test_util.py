@@ -56,7 +56,7 @@ def load_checkpoint(checkpoint_path, device, use_ddim=False, timestep_respacing=
     return (model, diffusion), model_args
 
 
-def get_model_results_path(args):
+def get_model_results_path(args, postfix=""):
     """
         Given arguments passed to an evaluation run, returns the path to the results path.
         The path has the format "results/<checkpoint_dir_subpath>/checkpoint name" where
@@ -73,7 +73,6 @@ def get_model_results_path(args):
         - outdir
     """
     # Extract the diffusion sampling arguments string (DDIM/respacing)
-    postfix = ""
     if args.use_ddim:
         postfix += "_ddim"
     if args.timestep_respacing != "":
@@ -99,7 +98,7 @@ def get_model_results_path(args):
         return Path(args.eval_dir)
 
 
-def get_eval_run_identifier(args):
+def get_eval_run_identifier(args, postfix=""):
     """
         args is expected to have the following attributes:
         - inference_mode
@@ -119,6 +118,8 @@ def get_eval_run_identifier(args):
         res = "gradientmethod_" + res
     if hasattr(args, "override_dataset") and args.override_dataset is not None:
         res = f"{args.override_dataset}_" + res
+    if postfix != "":
+        res += postfix
     return res
 
 
