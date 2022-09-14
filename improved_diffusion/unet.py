@@ -839,7 +839,7 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                 'x_t_minus_1': timesteps[0][0].detach().clone()-1, # case 3
                 'x_random': random_t.detach().clone(), # case 4
             }
-            timesteps[obs_mask.view(B, T) == 1] = timestamp_dict[kwargs['observed_frames']]
+            timesteps[obs_mask.view(B, T) == 1] = int(timestamp_dict[kwargs['observed_frames']])
         elif self.cond_emb_type in ['duplicate', 'all']:
             x = th.cat([x*latent_mask + x*(1-anything_mask),
                         x0*obs_mask],
