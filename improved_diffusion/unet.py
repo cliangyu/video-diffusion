@@ -834,9 +834,9 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                 random_t = kwargs['random_t']
                 del kwargs['random_t']
             timestamp_dict = {
-                'x_0': 0, # case 1
-                'x_t': timesteps[0][0].detach().clone(), # case 2
-                'x_t_minus_1': timesteps[0][0].detach().clone()-1, # case 3
+                'x_0': th.zeros_like(timesteps[:,0]), # case 1
+                'x_t': timesteps[:,0].detach().clone(), # case 2
+                'x_t_minus_1': timesteps[:,0].detach().clone()-1, # case 3
                 'x_random': random_t.detach().clone(), # case 4
             }
             timesteps = timestamp_dict[kwargs['observed_frames']].expand(T,B).T * obs_mask.view(B, T) + timesteps * (1-obs_mask.view(B, T))
