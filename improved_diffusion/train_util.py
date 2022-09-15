@@ -254,6 +254,12 @@ class TrainLoop:
                 indices = np.random.choice(T, size=n_frames.item(), replace=False)
                 obs_row[indices[:n_obs]] = 1.
                 latent_row[indices[n_obs:]] = 1.
+            elif self.mask_distribution == 'uniform-no-marg':
+                n_frames = self.max_frames
+                n_obs = np.random.randint(0, n_frames, size=())
+                indices = np.random.choice(T, size=n_frames, replace=False)
+                obs_row[indices[:n_obs]] = 1.
+                latent_row[indices[n_obs:]] = 1.
             elif self.mask_distribution == "differently-spaced-groups-no-marg":
                 assert self.max_frames == T
                 while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
