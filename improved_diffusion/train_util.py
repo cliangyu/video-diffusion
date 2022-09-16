@@ -125,14 +125,15 @@ class TrainLoop:
 
         if th.cuda.is_available():
             self.use_ddp = True
-            self.ddp_model = DDP(
-                self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
+            if dist.is_initialized() and dist.get_world_size() > 1:
+                self.ddp_model = DDP(
+                    self.model,
+                    device_ids=[dist_util.dev()],
+                    output_device=dist_util.dev(),
+                    broadcast_buffers=False,
+                    bucket_cap_mb=128,
+                    find_unused_parameters=False,
+                )
         else:
             if dist.get_world_size() > 1:
                 logger.warn(
@@ -149,7 +150,7 @@ class TrainLoop:
         with RNG(0):
             self.valid_batches = [next(self.data)[0][:self.valid_microbatch]
                                   for i in range(self.n_valid_batches)]
-        if dist.get_rank() == 0:
+        if dist.is_initialized() and dist.get_rank() == 0:
             wandb.log({"num_parameters": sum(p.numel() for p in model.parameters())})
 
     def _load_and_sync_parameters(self):

@@ -16,23 +16,23 @@ from .test_util import Protect
 NO_MPI = ('NO_MPI' in os.environ)
 if not NO_MPI:
     from mpi4py import MPI
-
+import torch.distributed as dist
 
 video_data_paths_dict = {
-    "minerl":       "datasets/minerl_navigate-torch",
-    "mazes":        "datasets/mazes-torch",
-    "mazes_cwvae":  "datasets/gqn_mazes-torch",
+    "minerl": "datasets/minerl_navigate-torch",
+    "mazes": "datasets/mazes-torch",
+    "mazes_cwvae": "datasets/gqn_mazes-torch",
     "bouncy_balls": "datasets/bouncing_balls_100",
     "carla_with_traffic": "datasets/carla/with-traffic",
     "carla_no_traffic": "datasets/carla/no-traffic",
-    "carla_town02_no_traffic":  "datasets/carla/town02-no-traffic",
+    "carla_town02_no_traffic": "datasets/carla/town02-no-traffic",
     "carla_no_traffic_variable_length": "datasets/carla/no-traffic-variable-length",
 }
 
 default_T_dict = {
-    "minerl":       500,
-    "mazes":        300,
-    "mazes_cwvae":  300,
+    "minerl": 500,
+    "mazes": 300,
+    "mazes_cwvae": 300,
     "bouncy_balls": 100,
     "carla_with_traffic": 1000,
     "carla_no_traffic": 1000,
@@ -40,9 +40,9 @@ default_T_dict = {
 }
 
 default_image_size_dict = {
-    "minerl":       64,
-    "mazes":        64,
-    "mazes_cwvae":  64,
+    "minerl": 64,
+    "mazes": 64,
+    "mazes_cwvae": 64,
     "bouncy_balls": 32,
     "carla_with_traffic": 128,
     "carla_no_traffic": 128,
@@ -51,7 +51,7 @@ default_image_size_dict = {
 
 
 def load_data(
-    *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
+        *, data_dir, batch_size, image_size, class_cond=False, deterministic=False
 ):
     """
     For a dataset, create a generator over (images, kwargs) pairs.
@@ -111,13 +111,19 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
         data_path = os.path.join(os.environ["DATA_ROOT"], data_path)
     # shard = 0 if NO_MPI else MPI.COMM_WORLD.Get_rank()
     # num_shards = 1 if NO_MPI else MPI.COMM_WORLD.Get_size()
-    shard=torch.distributed.get_rank() if NO_MPI else MPI.COMM_WORLD.Get_rank()
-    num_shards=torch.cuda.device_count() if NO_MPI else MPI.COMM_WORLD.Get_size()
+    if dist.is_initialized():
+        shard = torch.distributed.get_rank() if NO_MPI else MPI.COMM_WORLD.Get_rank()
+        num_shards = torch.cuda.device_count() if NO_MPI else MPI.COMM_WORLD.Get_size()
+    else:
+        shard = 0
+        num_shards = 1
+
     def get_loader(dataset):
         return DataLoader(
             dataset, batch_size=batch_size, shuffle=(not deterministic), num_workers=num_workers, drop_last=True,
             pin_memory=True
         )
+
     if dataset_name == "minerl":
         data_path = os.path.join(data_path, "train")
         dataset = MineRLDataset(data_path, shard=shard, num_shards=num_shards, T=T)
@@ -143,7 +149,7 @@ def load_video_data(dataset_name, batch_size, T=None, image_size=None, determini
 def get_test_dataset(dataset_name, T=None, image_size=None):
     if dataset_name == "mazes":
         raise Exception('Deprecated dataset.')
-    data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
+    data_root = Path(os.environ["DATA_ROOT"] if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
@@ -173,7 +179,7 @@ def get_variable_length_dataset(dataset_name, T):
 def get_train_dataset(dataset_name, T=None, image_size=None):
     if dataset_name == "mazes":
         raise Exception('Deprecated dataset.')
-    data_root = Path(os.environ["DATA_ROOT"]  if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
+    data_root = Path(os.environ["DATA_ROOT"] if "DATA_ROOT" in os.environ and os.environ["DATA_ROOT"] != "" else ".")
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = default_image_size_dict[dataset_name] if image_size is None else image_size
@@ -238,7 +244,7 @@ class ImageDataset(Dataset):
         arr = np.array(pil_image.convert("RGB"))
         crop_y = (arr.shape[0] - self.resolution) // 2
         crop_x = (arr.shape[1] - self.resolution) // 2
-        arr = arr[crop_y : crop_y + self.resolution, crop_x : crop_x + self.resolution]
+        arr = arr[crop_y: crop_y + self.resolution, crop_x: crop_x + self.resolution]
         arr = arr.astype(np.float32) / 127.5 - 1
 
         out_dict = {}
@@ -257,7 +263,7 @@ class TensorVideoDataset(Dataset):
 
     def preprocess(self, tensor):
         # renormalise from [0, 1] top [-1, 1]
-        return 2*tensor - 1
+        return 2 * tensor - 1
 
     def __len__(self):
         return len(self.local_tensor)
@@ -289,6 +295,7 @@ class BaseDataset(Dataset):
     Args:
         path (str): path to the dataset split
     """
+
     def __init__(self, path, T):
         super().__init__()
         self.T = T
@@ -337,7 +344,7 @@ class BaseDataset(Dataset):
             # Verify that the path is under
             data_root = Path(os.environ["DATA_ROOT"])
             assert data_root in path.parents, f"Expected dataset item path ({path}) to be located under the data root ({data_root})."
-            src_path = Path(*path.parts[len(data_root.parts):]) # drops the data_root part from the path, to get the relative path to the source file.
+            src_path = Path(*path.parts[len(data_root.parts):])  # drops the data_root part from the path, to get the relative path to the source file.
             return src_path
         return path
 
@@ -351,7 +358,7 @@ class BaseDataset(Dataset):
         if T < len(video):
             # Take a subsequence of the video.
             start_i = 0 if self.is_test else np.random.randint(len(video) - T + 1)
-            video = video[start_i:start_i+T]
+            video = video[start_i:start_i + T]
         assert len(video) == T
         return video
 
@@ -359,6 +366,7 @@ class BaseDataset(Dataset):
 class MazesDataset(BaseDataset):
     """ from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
+
     def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
@@ -386,7 +394,7 @@ class CarlaDataset(MazesDataset):
         self.fnames = [line.rstrip('\n').split('/')[-1] for line in open(self.split_path, 'r').readlines() if '.pt' in line]
         self.fnames = self.fnames[shard::num_shards]
         print(f"Training on {len(self.fnames)} files (Carla dataset).")
-        
+
         self.videos = []
         for idx in range(len(self.fnames)):
             path = self.getitem_path(idx)
@@ -398,19 +406,20 @@ class CarlaDataset(MazesDataset):
                 raise e
             video = self.postprocess_video(video)
             self.videos.append(video)
-        
+
     def __getitem__(self, idx):
         video = self.videos[idx]
-        return self.get_video_subsequence(video, self.T), {}    
-    
+        return self.get_video_subsequence(video, self.T), {}
+
     def getitem_path(self, idx):
         return self.path / self.fnames[idx]
 
     def postprocess_video(self, video):
-        return -1 + 2 * (video.permute(0, 3, 1, 2).float()/255)
+        return -1 + 2 * (video.permute(0, 3, 1, 2).float() / 255)
 
     def __len__(self):
         return len(self.fnames)
+
 
 class CarlaVariableLengthDataset(CarlaDataset):
     def __init__(self, T):
@@ -426,10 +435,10 @@ class CarlaVariableLengthDataset(CarlaDataset):
         self.is_test = False
 
 
-
 class GQNMazesDataset(BaseDataset):
     """ based on https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py .
     """
+
     def __init__(self, path, shard, num_shards, T):
         assert shard == 0, "Distributed training is not supported by the MineRL dataset yet."
         assert num_shards == 1, "Distributed training is not supported by the MineRL dataset yet."
