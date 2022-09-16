@@ -816,30 +816,42 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
             obs_indicator = indicator_template * obs_mask
             kinda_marg_indicator = indicator_template * kinda_marg_mask
             observed_dict = {
-                'x_0': x0, # case 1
-                'x_t': x, # case 2
-                'x_t_minus_1': kwargs['x_t_minus_1'], # case 3
-                'x_random': kwargs['x_random'], # case 4
+                'x_0': x0,
+                'x_t': x,
+                'x_t_minus_1': kwargs['x_t_minus_1'],
+                'x_random': kwargs['x_random'],
+                'hybrid': kwargs['hybrid'],
             }
-            observed_frames = observed_dict[kwargs['observed_frames']]
-            x = th.cat([x*latent_mask + observed_frames*obs_mask + x*(1-anything_mask), # case 3: use y_(t-1) and x_t
+            if 'hybrid' in kwargs['observed_frames']:
+                threshold = int(kwargs['observed_frames'].split('_')[-1])
+                fully_diffusion_mask = (timesteps < threshold)[:, :, None, None, None].expand(obs_mask.shape).int()
+                observed_frames = kwargs['x_t_minus_1']*fully_diffusion_mask + kwargs['hybrid']*(1-fully_diffusion_mask)
+            else:
+                observed_frames = observed_dict[kwargs['observed_frames']]
+            x = th.cat([x*latent_mask + observed_frames*obs_mask + x*(1-anything_mask),
                         obs_indicator,
                         kinda_marg_indicator],
                        dim=2)
-            if 'x_t_minus_1' in kwargs: 
-                del kwargs['x_t_minus_1']
-            if 'x_random' in kwargs: 
-                del kwargs['x_random']
-            if 'random_t' in kwargs:
-                random_t = kwargs['random_t']
-                del kwargs['random_t']
+            # if 'x_t_minus_1' in kwargs: 
+            #     del kwargs['x_t_minus_1']
+            # if 'x_random' in kwargs: 
+            #     del kwargs['x_random']
+            # if 'random_t' in kwargs:
+            #     random_t = kwargs['random_t']
+            #     del kwargs['random_t']
             timestamp_dict = {
-                'x_0': th.zeros_like(timesteps[:,0]), # case 1
-                'x_t': timesteps[:,0].detach().clone(), # case 2
-                'x_t_minus_1': timesteps[:,0].detach().clone()-1, # case 3
-                'x_random': random_t.detach().clone(), # case 4
+                'x_0': th.zeros_like(timesteps[:,0]),
+                'x_t': timesteps[:,0].detach().clone(),
+                'x_t_minus_1': timesteps[:,0].detach().clone()-1,
+                'x_random': kwargs['random_t'].detach().clone(),
             }
-            timesteps = timestamp_dict[kwargs['observed_frames']].expand(T,B).T * obs_mask.view(B, T) + timesteps * (1-obs_mask.view(B, T))
+            if 'hybrid' in kwargs['observed_frames']:
+                threshold = int(kwargs['observed_frames'].split('_')[-1])
+                fully_diffusion_mask = (timesteps < threshold).int()
+                timesteps_obs = fully_diffusion_mask * timestamp_dict['x_t_minus_1'].unsqueeze(-1) + (1-fully_diffusion_mask) * th.ones_like(timesteps[:,0]).unsqueeze(-1) * threshold
+            else:
+                timesteps_obs = timestamp_dict[kwargs['observed_frames']].expand(T,B).T
+            timesteps = timesteps_obs * obs_mask.view(B, T) + timesteps * (1-obs_mask.view(B, T))
         elif self.cond_emb_type in ['duplicate', 'all']:
             x = th.cat([x*latent_mask + x*(1-anything_mask),
                         x0*obs_mask],

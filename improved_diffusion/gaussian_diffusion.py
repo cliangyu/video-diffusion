@@ -542,6 +542,9 @@ class GaussianDiffusion:
             model_kwargs['x_t_minus_1'] = self.q_sample(model_kwargs['x0'], (t-1), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
             model_kwargs['random_t'] = th.floor(t * th.rand(t.shape).cuda()).long()
             model_kwargs['x_random'] = self.q_sample(model_kwargs['x0'], model_kwargs['random_t'].to('cuda'), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
+            if 'hybrid' in model_kwargs['observed_frames']:
+                threshold = int(model_kwargs['observed_frames'].split('_')[-1])
+                model_kwargs['hybrid'] = self.q_sample(model_kwargs['x0'], th.tensor([threshold] * shape[0], device=device), noise=th.randn_like(model_kwargs['x0']) if noise is None else noise)
             with th.no_grad():
                 out = self.p_sample(
                     model,
@@ -776,6 +779,9 @@ class GaussianDiffusion:
         model_kwargs['x_t_minus_1'] = self.q_sample(x_start, (t-1), noise=noise)
         model_kwargs['random_t'] = th.floor(t * th.rand(t.shape).cuda()).long()
         model_kwargs['x_random'] = self.q_sample(x_start, model_kwargs['random_t'], noise=noise)
+        if 'hybrid' in model_kwargs['observed_frames']:
+            threshold = int(model_kwargs['observed_frames'].split('_')[-1])
+            model_kwargs['hybrid'] = self.q_sample(x_start, th.tensor([threshold] * t.shape[0], device='cuda'), noise=noise)
         x_t = self.q_sample(x_start, t, noise=noise)
 
         terms = {}
