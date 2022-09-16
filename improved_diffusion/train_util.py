@@ -36,39 +36,39 @@ INITIAL_LOG_LOSS_SCALE = 20.0
 
 class TrainLoop:
     def __init__(
-        self,
-        *,
-        model,
-        diffusion,
-        data,
-        batch_size,
-        microbatch,
-        lr,
-        ema_rate,
-        log_interval,
-        save_interval,
-        resume_checkpoint,
-        T,
-        use_fp16=False,
-        fp16_scale_growth=1e-3,
-        schedule_sampler=None,
-        weight_decay=0.0,
-        lr_anneal_steps=0,
-        sample_interval=None,
-        do_inefficient_marg=True,
-        n_valid_batches=1,
-        n_valid_repeats=1,
-        max_frames=10,
-        n_interesting_masks=3,
-        mask_distribution="differently-spaced-groups",
-        pad_with_random_frames=True,
-        observed_frames='x_t_minus_1',
-        args=None
+            self,
+            *,
+            model,
+            diffusion,
+            data,
+            batch_size,
+            microbatch,
+            lr,
+            ema_rate,
+            log_interval,
+            save_interval,
+            resume_checkpoint,
+            T,
+            use_fp16=False,
+            fp16_scale_growth=1e-3,
+            schedule_sampler=None,
+            weight_decay=0.0,
+            lr_anneal_steps=0,
+            sample_interval=None,
+            do_inefficient_marg=True,
+            n_valid_batches=1,
+            n_valid_repeats=1,
+            max_frames=10,
+            n_interesting_masks=3,
+            mask_distribution="differently-spaced-groups",
+            pad_with_random_frames=True,
+            observed_frames='x_t_minus_1',
+            args=None
     ):
         current_rank = dist.get_rank() if dist.is_initialized() else 0
-        print('\n\n RUNNING INIT TRAIN LOOP WITH RANK',  current_rank, '\n\n')
+        print('\n\n RUNNING INIT TRAIN LOOP WITH RANK', current_rank, '\n\n')
         assert args is not None
-        self._args = args # This is only to be used when saving the model
+        self._args = args  # This is only to be used when saving the model
         self.model = model
         self.diffusion = diffusion
         self.data = data
@@ -96,7 +96,8 @@ class TrainLoop:
         self.lr_anneal_steps = lr_anneal_steps
 
         self.step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        self.global_batch = self.batch_size * world_size
 
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
@@ -155,7 +156,7 @@ class TrainLoop:
         resume_checkpoint = self.resume_checkpoint
 
         if resume_checkpoint:
-            if dist.get_rank() == 0:
+            if dist.is_initialized() and dist.get_rank() == 0:
                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
                     resume_checkpoint, map_location=dist_util.dev()
@@ -164,8 +165,11 @@ class TrainLoop:
                 self.model.load_state_dict(
                     state_dict["state_dict"]
                 )
-
-        dist_util.sync_params(self.model.parameters())
+            else:
+                # TODO: there might some codes to load model for single GPU
+                pass
+        if dist.is_initialized():
+            dist_util.sync_params(self.model.parameters())
 
     def _load_ema_parameters(self, rate):
         ema_params = copy.deepcopy(self.master_params)
@@ -208,21 +212,21 @@ class TrainLoop:
         self.model.convert_to_fp16()
 
     def sample_some_indices(self, max_indices, T):
-        s = th.randint(low=1, high=max_indices+1, size=())
-        max_scale = T / (s-0.999)
+        s = th.randint(low=1, high=max_indices + 1, size=())
+        max_scale = T / (s - 0.999)
         if self.mask_distribution in ["one-group", "differently-spaced-groups", "differently-spaced-groups-no-marg"] or 'linspace' in self.mask_distribution:
             scale = np.exp(np.random.rand() * np.log(max_scale))
         elif self.mask_distribution == "consecutive-groups":
             scale = 1
         else:
             raise NotImplementedError
-        pos = th.rand(()) * (T - scale*(s-1))
-        indices = [int(pos+i*scale) for i in range(s)]
+        pos = th.rand(()) * (T - scale * (s - 1))
+        indices = [int(pos + i * scale) for i in range(s)]
         # do some recursion if we have somehow failed to satisfy the consrtaints
-        if all(i<T and i>=0 for i in indices):
+        if all(i < T and i >= 0 for i in indices):
             return indices
         else:
-            print('warning: sampled indices', [int(pos+i*scale) for i in range(s)], 'trying again')
+            print('warning: sampled indices', [int(pos + i * scale) for i in range(s)], 'trying again')
             return self.sample_some_indices(max_indices, T)
 
     def sample_all_masks(self, batch1, batch2=None, gather=True, set_masks={'obs': (), 'latent': (), 'kinda_marg': ()}):
@@ -230,13 +234,13 @@ class TrainLoop:
         N = self.max_frames
         B, T, *_ = batch1.shape
         masks = {k: th.zeros_like(batch1[:, :, :1, :1, :1]) for k in ['obs', 'latent', 'kinda_marg']}
-        for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]): # for each video
+        for obs_row, latent_row, marg_row in zip(*[masks[k] for k in ['obs', 'latent', 'kinda_marg']]):  # for each video
             if 'autoregressive' in self.mask_distribution:
                 n_obs = int(self.mask_distribution.split('-')[1])
                 n_latent = self.max_frames - n_obs
-                start_i = th.randint(low=0, high=T-self.max_frames+1, size=())
-                obs_row[start_i:start_i+n_obs] = 1.
-                latent_row[start_i+n_obs:start_i+n_obs+n_latent] = 1.
+                start_i = th.randint(low=0, high=T - self.max_frames + 1, size=())
+                obs_row[start_i:start_i + n_obs] = 1.
+                latent_row[start_i + n_obs:start_i + n_obs + n_latent] = 1.
             elif 'linspace-no-obs' in self.mask_distribution:
                 low, high, n = map(int, self.mask_distribution.split('-')[-3:])  # for frameskip set T=frameskip*(max_frames-1)+1
                 indices = th.linspace(low, high, n).long()
@@ -245,8 +249,8 @@ class TrainLoop:
                 low, high, n = map(int, self.mask_distribution.split('-')[1:])  # for frameskip set T=frameskip*(max_frames-1)+1
                 indices = th.linspace(low, high, n).long()
                 latent_row[indices] = 1.
-                while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
-                    index_indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=N)).long()
+                while th.rand(size=()) > 0.5 and N - sum(obs_row) > 1:
+                    index_indices = th.tensor(self.sample_some_indices(max_indices=N - sum(obs_row).int().item() - 1, T=N)).long()
                     obs_row[indices[index_indices]] = 1.
                     latent_row[indices[index_indices]] = 0.
             elif self.mask_distribution == 'uniform':
@@ -263,8 +267,8 @@ class TrainLoop:
                 latent_row[indices[n_obs:]] = 1.
             elif self.mask_distribution == "differently-spaced-groups-no-marg":
                 assert self.max_frames == T
-                while th.rand(size=()) > 0.5 and N-sum(obs_row) > 1:
-                    indices = th.tensor(self.sample_some_indices(max_indices=N-sum(obs_row).int().item()-1, T=T))
+                while th.rand(size=()) > 0.5 and N - sum(obs_row) > 1:
+                    indices = th.tensor(self.sample_some_indices(max_indices=N - sum(obs_row).int().item() - 1, T=T))
                     obs_row[indices] = 1.
                 latent_row += 1 - obs_row
             elif self.mask_distribution == "one-group":
@@ -295,7 +299,7 @@ class TrainLoop:
         represented_mask = (masks['obs'] + masks['latent'] + masks['kinda_marg']).clip(max=1)
         if not gather:
             return batch1, masks['obs'], masks['latent'], masks['kinda_marg']
-        represented_mask, batch, (obs_mask, latent_mask, kinda_marg_mask), frame_indices =\
+        represented_mask, batch, (obs_mask, latent_mask, kinda_marg_mask), frame_indices = \
             self.gather_unmasked_elements(
                 represented_mask, batch1, batch2, (masks['obs'], masks['latent'], masks['kinda_marg'])
             )
@@ -315,10 +319,10 @@ class TrainLoop:
             indices[b, :instance_T] = mask[b].nonzero().flatten()
             # select random frames in case we are doing padding with single frames
             indices[b, instance_T:] = th.randint_like(indices[b, instance_T:], high=T) if self.pad_with_random_frames else 0
-            new_batch[b, :instance_T] = batch1[b][mask[b]==1]
+            new_batch[b, :instance_T] = batch1[b][mask[b] == 1]
             new_batch[b, instance_T:] = (batch1 if batch2 is None else batch2)[b][indices[b, instance_T:]]
             for new_t, t in zip(new_tensors, tensors):
-                new_t[b, :instance_T] = t[b][mask[b]==1]
+                new_t[b, :instance_T] = t[b][mask[b] == 1]
                 new_t[b, instance_T:] = t[b][indices[b, instance_T:]]
         return new_mask.view(B, effective_T, 1, 1, 1), new_batch, new_tensors, indices
 
@@ -327,8 +331,8 @@ class TrainLoop:
             gather_and_log_videos('data/', next(self.data)[0], log_as='both')
         last_sample_time = time()
         while (
-            not self.lr_anneal_steps
-            or self.step < self.lr_anneal_steps
+                not self.lr_anneal_steps
+                or self.step < self.lr_anneal_steps
         ):
 
             t_0 = time()
@@ -343,7 +347,7 @@ class TrainLoop:
                     return
             if self.sample_interval is not None and self.step != 0 and (self.step % self.sample_interval == 0 or self.step == 5):
                 self.log_samples()
-                logger.logkv('timing/time_between_samples', time()-last_sample_time)
+                logger.logkv('timing/time_between_samples', time() - last_sample_time)
                 last_sample_time = time()
             self.step += 1
         # Save the last checkpoint if it wasn't already saved.
@@ -375,7 +379,7 @@ class TrainLoop:
             last_batch = (i + self.microbatch) >= batch1.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
 
-            loss_mask = (1-obs_mask-kinda_marg_mask) if self.pad_with_random_frames else latent_mask
+            loss_mask = (1 - obs_mask - kinda_marg_mask) if self.pad_with_random_frames else latent_mask
             compute_losses = functools.partial(
                 self.diffusion.training_losses,
                 self.ddp_model,
@@ -476,13 +480,13 @@ class TrainLoop:
             for path in to_save:
                 # backup previous
                 if os.path.exists(path) and self._args.save_latest_only:
-                    shutil.copy(path, path+'-backup')
+                    shutil.copy(path, path + '-backup')
             for path, params in to_save.items():
                 with bf.BlobFile(path, "wb") as f:
                     th.save(params, f)
             for path in to_save:
                 # delete backup
-                backup_path = path+'-backup'
+                backup_path = path + '-backup'
                 if os.path.exists(backup_path):
                     os.remove(backup_path)
 
@@ -508,17 +512,19 @@ class TrainLoop:
 
     def make_interesting_masks(self, batch):
         n_masks = min(self.n_interesting_masks, len(batch))
+
         def make_zeros():
             return th.zeros_like(batch[:n_masks, :, :1, :1, :1])
+
         obs_mask = make_zeros()
         latent_mask = make_zeros()
         kinda_marg_mask = make_zeros()
         n_obs = self.max_frames // 3
         n_latent = self.max_frames - n_obs
         for i in range(n_masks):
-            spacing = 1 if n_masks == 1 else int((batch.shape[1] // self.max_frames)**(i/(n_masks-1)))
-            obs_mask[i, :n_obs*spacing:spacing] = 1.
-            latent_mask[i, n_obs*spacing:self.max_frames*spacing:spacing] = 1.
+            spacing = 1 if n_masks == 1 else int((batch.shape[1] // self.max_frames) ** (i / (n_masks - 1)))
+            obs_mask[i, :n_obs * spacing:spacing] = 1.
+            latent_mask[i, n_obs * spacing:self.max_frames * spacing:spacing] = 1.
         return {'obs': obs_mask, 'latent': latent_mask, 'kinda_marg': kinda_marg_mask}
 
     @rng_decorator(seed=0)
@@ -537,7 +543,6 @@ class TrainLoop:
             self.diffusion.p_sample_loop
         )
 
-
         def repeat(t):
             return th.repeat_interleave(t, repeats=self.n_valid_repeats, dim=0)
 
@@ -546,9 +551,10 @@ class TrainLoop:
 
         samples = []
         attns = []
+
         def chunk(t):
-            return th.chunk(t, dim=0, chunks=self.n_valid_batches*self.n_valid_repeats)
-        
+            return th.chunk(t, dim=0, chunks=self.n_valid_batches * self.n_valid_repeats)
+
         for x0, fi, om, lm, kmm in zip(*map(
                 chunk, [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])):
             s, a = sample_fn(
@@ -572,25 +578,25 @@ class TrainLoop:
         # visualise the samples -----------------------------------------------
         marked_batch = batch.clone()
         _mark_as_observed(marked_batch)
-        vis = sample*latent_mask + marked_batch*obs_mask
+        vis = sample * latent_mask + marked_batch * obs_mask
         vis_all = th.zeros_like(orig_batch)
         error = latent_mask * (sample - batch)
         error_all = th.zeros_like(orig_batch)
         for b in range(len(batch)):
             is_latent = latent_mask[b, :, 0, 0, 0].bool()
             is_obs = obs_mask[b, :, 0, 0, 0].bool()
-            existing_frame_indices = frame_indices[b, is_latent+is_obs]
+            existing_frame_indices = frame_indices[b, is_latent + is_obs]
             vis_all[b, existing_frame_indices] = vis[b, :len(existing_frame_indices)]
             latent_frame_indices = frame_indices[b, is_latent]
             error_all[b, latent_frame_indices] = error[b, is_latent]
-        rmse = ((error**2).mean()/latent_mask.mean()).sqrt()
+        rmse = ((error ** 2).mean() / latent_mask.mean()).sqrt()
         gather_and_log_videos('sample/', vis_all, log_as='array')
         n_samples_with_preset_masks = len(set_masks['obs']) * self.n_valid_repeats
         if n_samples_with_preset_masks > 0:
             gather_and_log_videos('sample/', vis[:n_samples_with_preset_masks], log_as='video')
         gather_and_log_videos('error/', error_all, log_as='array')
         logger.log("sampling complete")
-        logger.logkv('timing/sampling_time', time()-sample_start)
+        logger.logkv('timing/sampling_time', time() - sample_start)
         logger.logkv('rmse', rmse.cpu().item())
 
         # visualise the attn weights ------------------------------------------
@@ -599,17 +605,17 @@ class TrainLoop:
         for k, v in spatial_attn.items():
             logger.logkv(k, wandb.Image(concat_images_with_padding(v.unsqueeze(1), horizontal=False).cpu()))
         for k, attn in frame_attn.items():
-            fig = Figure(figsize=(5, 4.5*len(batch)))
+            fig = Figure(figsize=(5, 4.5 * len(batch)))
             canvas = FigureCanvas(fig)
-            axes = [fig.add_subplot(len(batch), 1, i+1) for i in range(len(batch))]
+            axes = [fig.add_subplot(len(batch), 1, i + 1) for i in range(len(batch))]
             for fi, attn_matrix, ax in zip(frame_indices.cpu().numpy(), attn.cpu(), axes):
                 n_frames = attn_matrix.shape[-1]
                 ax.imshow(attn_matrix, vmin=0, cmap='binary_r')
                 for axis, set_ticks, set_labels, set_lim in [('x', ax.set_xticks, ax.set_xticklabels, ax.set_xlim),
                                                              ('y', ax.set_yticks, ax.set_yticklabels, ax.set_ylim)]:
-                    set_ticks(np.linspace(0, n_frames-1, n_frames))
-                    set_labels(fi) #  (fi if axis == 'x' else fi[::-1])
-                    set_lim(-0.5, n_frames-0.5)
+                    set_ticks(np.linspace(0, n_frames - 1, n_frames))
+                    set_labels(fi)  # (fi if axis == 'x' else fi[::-1])
+                    set_lim(-0.5, n_frames - 0.5)
             logger.logkv(k, fig)
         self.model.train()
         self.model.load_state_dict(orig_state_dict)
@@ -620,7 +626,7 @@ class TrainLoop:
         vis = th.ones_like(batch)
         vis[obs_mask.expand_as(batch) == 1] = batch[obs_mask.expand_as(batch) == 1]
         for quartile in [0, 1, 2, 3, 3.99]:
-            t = th.tensor(self.diffusion.num_timesteps * (quartile/4)).int()
+            t = th.tensor(self.diffusion.num_timesteps * (quartile / 4)).int()
             xt = self.diffusion.q_sample(batch, t=t)
             vis[latent_mask.expand_as(batch) == 1] = xt[latent_mask.expand_as(batch) == 1]
             gather_and_log_videos(f'visualise/inputs-q{quartile}', vis, log_as='array',
@@ -629,8 +635,8 @@ class TrainLoop:
         red = th.tensor([1., 0., 0.]).view(1, 1, 3, 1, 1)
         blue = th.tensor([0., 1., 0.]).view(1, 1, 3, 1, 1)
         vis = th.ones_like(vis)
-        vis_red = vis*red
-        vis_blue = vis*blue
+        vis_red = vis * red
+        vis_blue = vis * blue
         vis[obs_mask.expand_as(batch) == 1] = vis_red[obs_mask.expand_as(batch) == 1]
         vis[latent_mask.expand_as(batch) == 1] = vis_blue[latent_mask.expand_as(batch) == 1]
         gather_and_log_videos('visualise/mask', vis, log_as='array', pad_dim_h=4, pad_dim_v=12, pad_val=0, pad_ends=True)
@@ -648,6 +654,7 @@ class TrainLoop:
             lat_indices += [[list(layer.nonzero(as_tuple=True)[0].flatten().numpy())] for layer in latent_mask.flatten(start_dim=2)]
         path = f"samples/indices/{self._args.mask_distribution}_{self._args.max_frames}_{self._args.T}_frame_indices.pt"
         th.save((obs_indices, lat_indices), path)
+
 
 def _mark_as_observed(images, color=[1., -1., -1.]):
     for i, c in enumerate(color):
@@ -670,7 +677,7 @@ def concat_images_with_padding(images, horizontal=True,
         images_with_padding.extend([image, padding])
     if pad_ends:
         images_with_padding = [padding, *images_with_padding, padding]
-    images_with_padding = images_with_padding[:-1]   # remove final pad
+    images_with_padding = images_with_padding[:-1]  # remove final pad
     return th.cat(images_with_padding, dim=2 if horizontal else 1)
 
 
@@ -694,13 +701,13 @@ def gather_and_log_videos(name, array, log_as='both', pad_dim_h=1, pad_dim_v=1, 
             horizontal=False, pad_dim=pad_dim_v, pad_val=pad_val, pad_ends=pad_ends,
         )
         img = img.permute(1, 2, 0).numpy()
-        logger.logkv(name+'array', wandb.Image(img))
+        logger.logkv(name + 'array', wandb.Image(img))
     if log_as in ['video', 'both']:
         # log each batch element as its own video
         final_frame = th.zeros_like(videos[0, :1])
         final_frame[..., ::2, 1::2] = 255  # checkerboard pattern to mark the end
         for i, video in enumerate(videos):
-            logger.logkv(name+f'video-{i}', wandb.Video(th.cat([video, final_frame], dim=0)))
+            logger.logkv(name + f'video-{i}', wandb.Video(th.cat([video, final_frame], dim=0)))
 
 
 def parse_resume_step_from_filename(filename):
