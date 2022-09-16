@@ -134,6 +134,8 @@ class TrainLoop:
                     bucket_cap_mb=128,
                     find_unused_parameters=False,
                 )
+            else:
+                self.ddp_model = self.model
         else:
             if dist.get_world_size() > 1:
                 logger.warn(
@@ -179,17 +181,20 @@ class TrainLoop:
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.step, rate,
                                              save_latest_only=self._args.save_latest_only)
         if ema_checkpoint:
-            if dist.get_rank() == 0:
+            if dist.is_initialized() and dist.get_rank() == 0:
                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
                 state_dict = dist_util.load_state_dict(
                     ema_checkpoint, map_location=dist_util.dev()
                 )
                 ema_params = self._state_dict_to_master_params(state_dict['state_dict'])
+            else:
+                # TODO: there might some codes to load model for single GPU
+                pass
         else:
             print(f"Failed to find EMA checkpoint for rate {rate} and main checkpoint {main_checkpoint}.")
             raise Exception
-
-        dist_util.sync_params(ema_params)
+        if dist.is_initialized():
+            dist_util.sync_params(ema_params)
         return ema_params
 
     def _load_optimizer_state(self):
@@ -461,7 +466,7 @@ class TrainLoop:
             logger.logkv("lg_loss_scale", self.lg_loss_scale)
 
     def save(self):
-        if dist.get_rank() == 0:
+        if dist.is_initialized() and dist.get_rank() == 0:
             postfix = "latest" if self._args.save_latest_only else f"{(self.step):06d}"
             to_save = {bf.join(get_blob_logdir(self._args), f"opt_{postfix}.pt"): self.opt.state_dict()}
 
@@ -490,8 +495,36 @@ class TrainLoop:
                 backup_path = path + '-backup'
                 if os.path.exists(backup_path):
                     os.remove(backup_path)
+            dist.barrier()
+        else:
+            postfix = "latest" if self._args.save_latest_only else f"{(self.step):06d}"
+            to_save = {bf.join(get_blob_logdir(self._args), f"opt_{postfix}.pt"): self.opt.state_dict()}
 
-        dist.barrier()
+            # vmnote: make dir if it doesn't exist
+            Path(get_blob_logdir(self._args)).mkdir(parents=True, exist_ok=True)
+
+            for rate, params in zip([0, *self.ema_rate],
+                                    [self.master_params, *self.ema_params]):
+                filename = f"ema_{rate}_{postfix}.pt" if rate else f"model_{postfix}.pt"
+                filepath = bf.join(get_blob_logdir(self._args), filename)
+                to_save[filepath] = {
+                    "state_dict": self._master_params_to_state_dict(params),
+                    "config": self._args.__dict__,
+                    "step": self.step
+                }
+
+            for path in to_save:
+                # backup previous
+                if os.path.exists(path) and self._args.save_latest_only:
+                    shutil.copy(path, path + '-backup')
+            for path, params in to_save.items():
+                with bf.BlobFile(path, "wb") as f:
+                    th.save(params, f)
+            for path in to_save:
+                # delete backup
+                backup_path = path + '-backup'
+                if os.path.exists(backup_path):
+                    os.remove(backup_path)
 
     def _master_params_to_state_dict(self, master_params):
         if self.use_fp16:
@@ -690,10 +723,13 @@ def gather_and_log_videos(name, array, log_as='both', pad_dim_h=1, pad_dim_v=1, 
     array = array.to(dist_util.dev())
     array = ((array + 1) * 127.5).clamp(0, 255).to(th.uint8)
     array = array.contiguous()
-    gathered_arrays = [th.zeros_like(array) for _ in range(dist.get_world_size())]
-    dist.all_gather(gathered_arrays, array)  # gather not supported with NCCL
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    gathered_arrays = [th.zeros_like(array) for _ in range(world_size)]
+    if dist.is_initialized():
+        dist.all_gather(gathered_arrays, array)  # gather not supported with NCCL
     videos = th.cat([array.cpu() for array in gathered_arrays], dim=0)
-    dist.barrier()
+    if dist.is_initialized():
+        dist.barrier()
 
     if log_as in ['array', 'both']:
         # log all videos/frames as one single image array
