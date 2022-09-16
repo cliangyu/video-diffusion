@@ -20,7 +20,6 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion.train_util import TrainLoop
 
-
 torch.backends.cuda.matmul.allow_tf32 = True
 
 os.environ["MY_WANDB_DIR"] = "none"
@@ -54,7 +53,7 @@ def main():
         # Set the number of workers automatically.
         args.num_workers = max(num_available_cores() - 1, 1)
         print(f"num_workers is not specified. It is automatically set to \"number of cores - 1\" = {args.num_workers}")
-        
+
     set_random_seed(args.fake_seed, deterministic=True)
 
     video_length = default_T_dict[args.dataset]
@@ -70,7 +69,7 @@ def main():
     args.rp_beta = int(args.rp_beta)
     args.rp_gamma = int(args.rp_gamma)
     assert args.rp_beta >= args.rp_alpha
-    
+
     Path("checkpoints").mkdir(parents=True, exist_ok=True)
 
     dist_util.setup_dist()
@@ -157,10 +156,10 @@ def create_argparser():
         max_frames=10,
         save_latest_only=False,  # If False, keeps all the checkpoints saved during training.
         resume_id="",
-        mask_distribution="differently-spaced-groups",   # can also do "consecutive-groups" or "autoregressive-{i}", or "differently-spaced-groups-no-marg"
+        mask_distribution="differently-spaced-groups",  # can also do "consecutive-groups" or "autoregressive-{i}", or "differently-spaced-groups-no-marg"
         just_visualise=False,
         just_save_masks=0,
-        num_workers=-1,     # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
+        num_workers=-1,  # Number of workers to use for training dataloader. If not specified, uses the number of available cores on the machine.
         pad_with_random_frames=True,
         fake_seed=1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed
         observed_frames='x_t_minus_1',  # the input of observed frames, case 1: 'x_0', case 2: 'x_t', case 3: 'x_t_minus_1'

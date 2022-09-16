@@ -65,7 +65,8 @@ class TrainLoop:
         observed_frames='x_t_minus_1',
         args=None
     ):
-        print('\n\n RUNNING INIT TRAIN LOOP WITH RANK',  dist.get_rank(), '\n\n')
+        current_rank = dist.get_rank() if dist.is_initialized() else 0
+        print('\n\n RUNNING INIT TRAIN LOOP WITH RANK',  current_rank, '\n\n')
         assert args is not None
         self._args = args # This is only to be used when saving the model
         self.model = model
