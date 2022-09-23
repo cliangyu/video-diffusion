@@ -1,34 +1,33 @@
 import argparse
-import random
 import inspect
+import random
+
 import numpy as np
 import torch
 
 from . import gaussian_diffusion as gd
 from .respace import SpacedDiffusion, space_timesteps
-from .unet import SuperResModel, UNetModel, UNetVideoModel, CondMargVideoModel
+from .unet import CondMargVideoModel, SuperResModel, UNetModel, UNetVideoModel
 
 NUM_CLASSES = 1000
 
 
 def model_and_diffusion_defaults():
-    """
-    Defaults for image training.
-    """
+    """Defaults for image training."""
     return dict(
         image_size=64,
         num_channels=128,
         num_res_blocks=2,
         num_heads=4,
         num_heads_upsample=-1,
-        attention_resolutions="16,8",
+        attention_resolutions='16,8',
         dropout=0.0,
         learn_sigma=False,
         sigma_small=False,
         class_cond=False,
         diffusion_steps=1000,
-        noise_schedule="linear",
-        timestep_respacing="",
+        noise_schedule='linear',
+        timestep_respacing='',
         use_kl=False,
         predict_xstart=False,
         rescale_timesteps=True,
@@ -49,7 +48,8 @@ def video_model_and_diffusion_defaults():
     defaults['enforce_position_invariance'] = False
     defaults['temporal_augment_type'] = 'add_manyhead_presoftmax_time'
     defaults['use_rpe_net'] = True
-    defaults['cond_emb_type'] = 'channel'   # channel, channel-initzero, duplicate, duplicate-initzero, or t=0
+    defaults[
+        'cond_emb_type'] = 'channel'  # channel, channel-initzero, duplicate, duplicate-initzero, or t=0
     defaults['rp_alpha'] = None
     defaults['rp_beta'] = None
     defaults['rp_gamma'] = None
@@ -202,10 +202,10 @@ def create_model(
     elif image_size == 32:
         channel_mult = (1, 2, 2, 2)
     else:
-        raise ValueError(f"unsupported image size: {image_size}")
+        raise ValueError(f'unsupported image size: {image_size}')
 
     attention_ds = []
-    for res in attention_resolutions.split(","):
+    for res in attention_resolutions.split(','):
         attention_ds.append(image_size // int(res))
 
     return UNetModel(
@@ -246,9 +246,9 @@ def create_video_model(
     enforce_position_invariance,
     temporal_augment_type,
     use_rpe_net,
-    rp_alpha,           # Alpha parameter of RPE attention
-    rp_beta,            # Beta parameter of RPE attention
-    rp_gamma,           # Gamma parameter of RPE attention
+    rp_alpha,  # Alpha parameter of RPE attention
+    rp_beta,  # Beta parameter of RPE attention
+    rp_gamma,  # Gamma parameter of RPE attention
     cond_emb_type,
     allow_interactions_between_padding,
 ):
@@ -261,10 +261,10 @@ def create_video_model(
     elif image_size == 32:
         channel_mult = (1, 2, 2, 2)
     else:
-        raise ValueError(f"unsupported image size: {image_size}")
+        raise ValueError(f'unsupported image size: {image_size}')
 
     attention_ds = []
-    for res in attention_resolutions.split(","):
+    for res in attention_resolutions.split(','):
         attention_ds.append(image_size // int(res))
 
     if any([rp_alpha, rp_beta, rp_gamma]):
@@ -302,8 +302,8 @@ def create_video_model(
 
 def sr_model_and_diffusion_defaults():
     res = model_and_diffusion_defaults()
-    res["large_size"] = 256
-    res["small_size"] = 64
+    res['large_size'] = 256
+    res['small_size'] = 64
     arg_names = inspect.getfullargspec(sr_create_model_and_diffusion)[0]
     for k in res.copy().keys():
         if k not in arg_names:
@@ -380,10 +380,10 @@ def sr_create_model(
     elif large_size == 64:
         channel_mult = (1, 2, 3, 4)
     else:
-        raise ValueError(f"unsupported large size: {large_size}")
+        raise ValueError(f'unsupported large size: {large_size}')
 
     attention_ds = []
-    for res in attention_resolutions.split(","):
+    for res in attention_resolutions.split(','):
         attention_ds.append(large_size // int(res))
 
     return SuperResModel(
@@ -407,12 +407,12 @@ def create_gaussian_diffusion(
     steps=1000,
     learn_sigma=False,
     sigma_small=False,
-    noise_schedule="linear",
+    noise_schedule='linear',
     use_kl=False,
     predict_xstart=False,
     rescale_timesteps=False,
     rescale_learned_sigmas=False,
-    timestep_respacing="",
+    timestep_respacing='',
 ):
     betas = gd.get_named_beta_schedule(noise_schedule, steps)
     if use_kl:
@@ -426,18 +426,11 @@ def create_gaussian_diffusion(
     return SpacedDiffusion(
         use_timesteps=space_timesteps(steps, timestep_respacing),
         betas=betas,
-        model_mean_type=(
-            gd.ModelMeanType.EPSILON if not predict_xstart else gd.ModelMeanType.START_X
-        ),
-        model_var_type=(
-            (
-                gd.ModelVarType.FIXED_LARGE
-                if not sigma_small
-                else gd.ModelVarType.FIXED_SMALL
-            )
-            if not learn_sigma
-            else gd.ModelVarType.LEARNED_RANGE
-        ),
+        model_mean_type=(gd.ModelMeanType.EPSILON
+                         if not predict_xstart else gd.ModelMeanType.START_X),
+        model_var_type=((gd.ModelVarType.FIXED_LARGE
+                         if not sigma_small else gd.ModelVarType.FIXED_SMALL)
+                        if not learn_sigma else gd.ModelVarType.LEARNED_RANGE),
         loss_type=loss_type,
         rescale_timesteps=rescale_timesteps,
     )
@@ -450,26 +443,29 @@ def add_dict_to_argparser(parser, default_dict):
             v_type = str
         elif isinstance(v, bool):
             v_type = str2bool
-        parser.add_argument(f"--{k}", default=v, type=v_type)
+        parser.add_argument(f'--{k}', default=v, type=v_type)
 
 
 def args_to_dict(args, keys):
     backups = {'allow_interactions_between_padding': True}
-    return {k: getattr(args, k) if hasattr(args, k) else backups[k] for k in keys}
+    return {
+        k: getattr(args, k) if hasattr(args, k) else backups[k]
+        for k in keys
+    }
 
 
 def str2bool(v):
-    """
-    https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
-    """
+    """https://stackoverflow.com/questions/15008758/parsing-boolean-values-
+    with-argparse."""
     if isinstance(v, bool):
         return v
-    if v.lower() in ("yes", "true", "t", "y", "1"):
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
         return True
-    elif v.lower() in ("no", "false", "f", "n", "0"):
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
         return False
     else:
-        raise argparse.ArgumentTypeError("boolean value expected")
+        raise argparse.ArgumentTypeError('boolean value expected')
+
 
 def set_random_seed(seed, deterministic=False):
     """Set random seed.

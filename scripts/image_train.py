@@ -1,18 +1,14 @@
-"""
-Train a diffusion model on images.
-"""
+"""Train a diffusion model on images."""
 
 import argparse
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
-from improved_diffusion.script_util import (
-    model_and_diffusion_defaults,
-    create_model_and_diffusion,
-    args_to_dict,
-    add_dict_to_argparser,
-)
+from improved_diffusion.script_util import (add_dict_to_argparser,
+                                            args_to_dict,
+                                            create_model_and_diffusion,
+                                            model_and_diffusion_defaults)
 from improved_diffusion.train_util import TrainLoop
 
 
@@ -22,14 +18,15 @@ def main():
     dist_util.setup_dist()
     logger.configure()
 
-    logger.log("creating model and diffusion...")
+    logger.log('creating model and diffusion...')
     model, diffusion = create_model_and_diffusion(
-        **args_to_dict(args, model_and_diffusion_defaults().keys())
-    )
+        **args_to_dict(args,
+                       model_and_diffusion_defaults().keys()))
     model.to(dist_util.dev())
-    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+    schedule_sampler = create_named_schedule_sampler(args.schedule_sampler,
+                                                     diffusion)
 
-    logger.log("creating data loader...")
+    logger.log('creating data loader...')
     data = load_data(
         data_dir=args.data_dir,
         batch_size=args.batch_size,
@@ -37,7 +34,7 @@ def main():
         class_cond=args.class_cond,
     )
 
-    logger.log("training...")
+    logger.log('training...')
     TrainLoop(
         model=model,
         diffusion=diffusion,
@@ -59,17 +56,17 @@ def main():
 
 def create_argparser():
     defaults = dict(
-        data_dir="",
-        schedule_sampler="uniform",
+        data_dir='',
+        schedule_sampler='uniform',
         lr=1e-4,
         weight_decay=0.0,
         lr_anneal_steps=0,
         batch_size=1,
         microbatch=-1,  # -1 disables microbatches
-        ema_rate="0.9999",  # comma-separated list of EMA values
+        ema_rate='0.9999',  # comma-separated list of EMA values
         log_interval=10,
         save_interval=10000,
-        resume_checkpoint="",
+        resume_checkpoint='',
         use_fp16=False,
         fp16_scale_growth=1e-3,
     )
@@ -79,5 +76,5 @@ def create_argparser():
     return parser
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
