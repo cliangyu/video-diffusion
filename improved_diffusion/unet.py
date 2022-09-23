@@ -819,8 +819,8 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                 'x_0': x0,
                 'x_t': x,
                 'x_t_minus_1': kwargs['x_t_minus_1'],
-                'x_random': kwargs['x_random'],
-                'hybrid': kwargs['hybrid'],
+                'x_random': kwargs['x_random'] if self.training else None,
+                'hybrid': kwargs['hybrid'] if self.training else None,
             }
             if 'hybrid' in kwargs['observed_frames']:
                 threshold = int(kwargs['observed_frames'].split('_')[-1])
@@ -843,7 +843,7 @@ class CondMargVideoModel(UNetVideoModel):   # TODO could generalise to derive si
                 'x_0': th.zeros_like(timesteps[:,0]),
                 'x_t': timesteps[:,0].detach().clone(),
                 'x_t_minus_1': timesteps[:,0].detach().clone()-1,
-                'x_random': kwargs['random_t'].detach().clone(),
+                'x_random': kwargs['random_t'].detach().clone() if self.training else None,
             }
             if 'hybrid' in kwargs['observed_frames']:
                 threshold = int(kwargs['observed_frames'].split('_')[-1])

@@ -68,6 +68,9 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
         optimal_schedule_path=optimal_schedule_path,
         **adaptive_kwargs
     ))
+    indices = list(range(diffusion.num_timesteps))[::-1]
+    all_timestep_samples = torch.zeros([B, len(indices), T, C, H, W]).cpu()
+    all_timestep_samples[:, :, :obs_length] = samples[:, :obs_length].unsqueeze(1).expand(-1, 1000, -1, -1, -1, -1)
 
     while True:
         if 'adaptive' in mode:
@@ -95,28 +98,39 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
         print("-" * 40)
         # Move tensors to the correct device
         [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [xyz.to(batch.device) for xyz in [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]]
-        # Run the network
-        local_samples, attention_map = diffusion.p_sample_loop(
-            model, x0.shape, clip_denoised=True,
-            model_kwargs=dict(frame_indices=frame_indices,
-                              x0=x0,
-                              obs_mask=obs_mask,
-                              latent_mask=latent_mask,
-                              kinda_marg_mask=kinda_marg_mask,
-                              observed_frames=args.observed_frames,
-                              ),
-            latent_mask=latent_mask,
-            return_attn_weights=False,
-            use_gradient_method=use_gradient_method,
-            )
+                
+        all_timestep_local_samples = []
+        local_samples = x0.clone()
+        for i in indices:
+            local_samples = diffusion.p_sample(
+                    model,
+                    local_samples,
+                    t=torch.tensor([i] * x0.shape[0], device=next(model.parameters()).device),
+                    clip_denoised=True,
+                    model_kwargs=dict(frame_indices=frame_indices,
+                                        x0=x0,
+                                        obs_mask=obs_mask,
+                                        latent_mask=latent_mask,
+                                        kinda_marg_mask=kinda_marg_mask,
+                                        x_t_minus_1=x0,
+                                        observed_frames=args.observed_frames,
+                                        ),                    
+                    return_attn_weights=False,
+                    use_gradient_method=use_gradient_method,
+                )["sample"]
+            all_timestep_local_samples.append(local_samples.clone())
+        all_timestep_local_samples = torch.stack(all_timestep_local_samples, dim=1) # BxTimestepxTxCxHxW
+        
         # Fill in the generated frames
         if 'adaptive' in mode:
             n_obs = len(obs_frame_indices[0])
             for i, li in enumerate(latent_frame_indices):
                 samples[i, li] = local_samples[i, n_obs:].cpu()
+                all_timestep_samples[i, :, li] = all_timestep_local_samples[i, :, n_obs:].cpu()
         else:
             samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
-    return samples.numpy()
+            all_timestep_samples[:, :, latent_frame_indices] = all_timestep_local_samples[:, :, -n_latent:].cpu()
+    return samples.numpy(), all_timestep_samples.numpy()
 
 
 def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indices=None):
@@ -128,6 +142,7 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
             output_filenames = [args.eval_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
+            all_timestep_output_filenames = [args.eval_dir / "samples" / f"all_timestep_sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
@@ -135,7 +150,7 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
                 if args.T is not None:
                     batch = batch[:, :args.T]
                 batch = batch.to(args.device)
-                recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
+                recon, all_timestep_recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                     batch=batch, max_frames=args.max_frames, obs_length=args.obs_length,
                                     step_size=args.step_size, optimal_schedule_path=optimal_schedule_path,
                                     use_gradient_method=use_gradient_method)
@@ -147,6 +162,16 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
                         print(f"*** Saved {output_filenames[i]} ***")
                     else:
                         print(f"Skipped {output_filenames[i]}")
+                        
+                all_timestep_recon = (all_timestep_recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
+                all_timestep_recon = all_timestep_recon.astype(np.uint8)
+                for i in range(batch_size):
+                    if todo[i]:
+                        np.save(all_timestep_output_filenames[i], all_timestep_recon[i])
+                        print(f"*** Saved {output_filenames[i]} ***")
+                    else:
+                        print(f"Skipped {output_filenames[i]}")
+                        
         cnt += batch_size
 
 

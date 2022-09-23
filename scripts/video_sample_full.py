@@ -64,6 +64,7 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
     
     indices = list(range(diffusion.num_timesteps))[::-1]
+    all_timestep_samples = []
 
     for i in indices:
         
@@ -129,7 +130,9 @@ def infer_video(mode, model, diffusion, batch, max_frames, obs_length,
                     samples[i, li] = local_samples[i, n_obs:].cpu()
             else:
                 samples[:, latent_frame_indices] = local_samples[:, -n_latent:].cpu()
-    return samples.numpy()
+        all_timestep_samples.append(samples.clone())
+    all_timestep_samples = torch.stack(all_timestep_samples, dim=1) # BxTimestepxTxCxHxW
+    return samples.numpy(), all_timestep_samples.numpy()
 
 
 def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indices=None):
@@ -141,6 +144,7 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
         batch_size = len(batch)
         for sample_idx in range(args.num_samples) if args.sample_idx is None else [args.sample_idx]:
             output_filenames = [args.eval_dir / "samples" / f"sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
+            all_timestep_output_filenames = [args.eval_dir / "samples" / f"all_timestep_sample_{dataset_idx_translate(cnt + i):04d}-{sample_idx}.npy" for i in range(batch_size)]
             todo = [not p.exists() for (i, p) in enumerate(output_filenames)] # Whether the file should be generated
             if not any(todo):
                 print(f"Nothing to do for the batches {cnt} - {cnt + batch_size - 1}, sample #{sample_idx}.")
@@ -148,7 +152,7 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
                 if args.T is not None:
                     batch = batch[:, :args.T]
                 batch = batch.to(args.device)
-                recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
+                recon, all_timestep_recon = infer_video(mode=args.inference_mode, model=model, diffusion=diffusion,
                                     batch=batch, max_frames=args.max_frames, obs_length=args.obs_length,
                                     step_size=args.step_size, optimal_schedule_path=optimal_schedule_path,
                                     use_gradient_method=use_gradient_method)
@@ -160,6 +164,16 @@ def main(args, model, diffusion, dataloader, use_gradient_method, dataset_indice
                         print(f"*** Saved {output_filenames[i]} ***")
                     else:
                         print(f"Skipped {output_filenames[i]}")
+                
+                all_timestep_recon = (all_timestep_recon - drange[0]) / (drange[1] - drange[0])  * 255 # recon with pixel values in [0, 255]
+                all_timestep_recon = all_timestep_recon.astype(np.uint8)
+                for i in range(batch_size):
+                    if todo[i]:
+                        np.save(all_timestep_output_filenames[i], all_timestep_recon[i])
+                        print(f"*** Saved {output_filenames[i]} ***")
+                    else:
+                        print(f"Skipped {output_filenames[i]}")
+                        
         cnt += batch_size
 
 
