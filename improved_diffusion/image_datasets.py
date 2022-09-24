@@ -21,21 +21,21 @@ if not NO_MPI:
 
 video_data_paths_dict = {
     'minerl':
-    'datasets/minerl_navigate-torch',
+        'datasets/minerl_navigate-torch',
     'mazes':
-    'datasets/mazes-torch',
+        'datasets/mazes-torch',
     'mazes_cwvae':
-    'datasets/gqn_mazes-torch',
+        'datasets/gqn_mazes-torch',
     'bouncy_balls':
-    'datasets/bouncing_balls_100',
+        'datasets/bouncing_balls_100',
     'carla_with_traffic':
-    'datasets/carla/with-traffic',
+        'datasets/carla/with-traffic',
     'carla_no_traffic':
-    'datasets/carla/no-traffic',
+        'datasets/carla/no-traffic',
     'carla_town02_no_traffic':
-    'datasets/carla/town02-no-traffic',
+        'datasets/carla/town02-no-traffic',
     'carla_no_traffic_variable_length':
-    'datasets/carla/no-traffic-variable-length',
+        'datasets/carla/no-traffic-variable-length',
 }
 
 default_T_dict = {
@@ -118,13 +118,13 @@ def load_data(*,
 
 
 def load_video_data(
-    dataset_name,
-    batch_size,
-    T=None,
-    image_size=None,
-    deterministic=False,
-    num_workers=1,
-    data_path=None,
+        dataset_name,
+        batch_size,
+        T=None,
+        image_size=None,
+        deterministic=False,
+        num_workers=1,
+        data_path=None,
 ):
     # NOTE this is just for loading training data (not test)
     if data_path is None:
@@ -176,9 +176,9 @@ def load_video_data(
                                   num_shards=num_shards,
                                   T=T)
     elif dataset_name in [
-            'carla_no_traffic',
-            'carla_with_traffic',
-            'carla_town02_no_traffic',
+        'carla_no_traffic',
+        'carla_with_traffic',
+        'carla_town02_no_traffic',
     ]:
         dataset = CarlaDataset(train=True,
                                path=data_path,
@@ -201,7 +201,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     if dataset_name == 'mazes':
         raise Exception('Deprecated dataset.')
     data_root = Path(os.environ['DATA_ROOT'] if 'DATA_ROOT' in os.environ
-                     and os.environ['DATA_ROOT'] != '' else '.')
+                                                and os.environ['DATA_ROOT'] != '' else '.')
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = (default_image_size_dict[dataset_name]
@@ -217,9 +217,9 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         data_path = os.path.join(data_path, 'test')
         dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name in [
-            'carla_no_traffic',
-            'carla_with_traffic',
-            'carla_town02_no_traffic',
+        'carla_no_traffic',
+        'carla_with_traffic',
+        'carla_town02_no_traffic',
     ]:
         dataset = CarlaDataset(train=False,
                                path=data_path,
@@ -241,7 +241,7 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
     if dataset_name == 'mazes':
         raise Exception('Deprecated dataset.')
     data_root = Path(os.environ['DATA_ROOT'] if 'DATA_ROOT' in os.environ
-                     and os.environ['DATA_ROOT'] != '' else '.')
+                                                and os.environ['DATA_ROOT'] != '' else '.')
     data_path = data_root / video_data_paths_dict[dataset_name]
     T = default_T_dict[dataset_name] if T is None else T
     image_size = (default_image_size_dict[dataset_name]
@@ -254,9 +254,9 @@ def get_train_dataset(dataset_name, T=None, image_size=None):
         data_path = os.path.join(data_path, 'train')
         dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
     elif dataset_name in [
-            'carla_no_traffic',
-            'carla_with_traffic',
-            'carla_town02_no_traffic',
+        'carla_no_traffic',
+        'carla_with_traffic',
+        'carla_town02_no_traffic',
     ]:
         dataset = CarlaDataset(train=True,
                                path=data_path,
@@ -294,7 +294,7 @@ class ImageDataset(Dataset):
         self.resolution = resolution
         self.local_images = image_paths[shard:][::num_shards]
         self.local_classes = None if classes is None else classes[
-            shard:][::num_shards]
+                                                          shard:][::num_shards]
 
     def __len__(self):
         return len(self.local_images)
@@ -315,13 +315,13 @@ class ImageDataset(Dataset):
         scale = self.resolution / min(*pil_image.size)
         pil_image = pil_image.resize(tuple(
             round(x * scale) for x in pil_image.size),
-                                     resample=Image.BICUBIC)
+            resample=Image.BICUBIC)
 
         arr = np.array(pil_image.convert('RGB'))
         crop_y = (arr.shape[0] - self.resolution) // 2
         crop_x = (arr.shape[1] - self.resolution) // 2
         arr = arr[crop_y:crop_y + self.resolution,
-                  crop_x:crop_x + self.resolution]
+              crop_x:crop_x + self.resolution]
         arr = arr.astype(np.float32) / 127.5 - 1
 
         out_dict = {}
@@ -373,6 +373,7 @@ class BaseDataset(Dataset):
     Args:
         path (str): path to the dataset split
     """
+
     def __init__(self, path, T):
         super().__init__()
         self.T = T
@@ -424,7 +425,7 @@ class BaseDataset(Dataset):
             # Verify that the path is under
             data_root = Path(os.environ['DATA_ROOT'])
             assert (
-                data_root in path.parents
+                    data_root in path.parents
             ), f'Expected dataset item path ({path}) to be located under the data root ({data_root}).'
             src_path = Path(
                 *path.parts[len(data_root.parts):]
@@ -451,12 +452,13 @@ class BaseDataset(Dataset):
 class MazesDataset(BaseDataset):
     """from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py
     ."""
+
     def __init__(self, path, shard, num_shards, T):
         assert (
-            shard == 0
+                shard == 0
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         assert (
-            num_shards == 1
+                num_shards == 1
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 
@@ -474,6 +476,45 @@ class MazesDataset(BaseDataset):
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
         return video
+
+
+class BairPushingDataset(MazesDataset):
+    def __init__(self, train, shard, num_shards, *args, **kwargs):
+        super().__init__(shard=0, num_shards=1, *args,
+                         **kwargs)  # dumy values of
+        self.split_path = self.path / f"video_{'train' if train else 'test'}.csv"
+        # self.cache_file(self.split_path)
+        self.fnames = [
+            line.rstrip('\n').split('/')[-1]
+            for line in open(self.split_path, 'r').readlines() if '.pt' in line
+        ]
+        self.fnames = self.fnames[shard::num_shards]
+        print(f'Training on {len(self.fnames)} files (Carla dataset).')
+
+        self.videos = []
+        for idx in range(len(self.fnames)):
+            path = self.getitem_path(idx)
+            self.cache_file(path)
+            try:
+                video = self.loaditem(path)
+            except Exception as e:
+                print(f'Failed on loading {path}')
+                raise e
+            video = self.postprocess_video(video)
+            self.videos.append(video)
+
+    def __getitem__(self, idx):
+        video = self.videos[idx]
+        return self.get_video_subsequence(video, self.T), {}
+
+    def getitem_path(self, idx):
+        return self.path / self.fnames[idx]
+
+    def postprocess_video(self, video):
+        return -1 + 2 * (video.permute(0, 3, 1, 2).float() / 255)
+
+    def __len__(self):
+        return len(self.fnames)
 
 
 class CarlaDataset(MazesDataset):
@@ -534,12 +575,13 @@ class CarlaVariableLengthDataset(CarlaDataset):
 class GQNMazesDataset(BaseDataset):
     """based on https://github.com/iShohei220/torch-
     gqn/blob/master/gqn_dataset.py ."""
+
     def __init__(self, path, shard, num_shards, T):
         assert (
-            shard == 0
+                shard == 0
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         assert (
-            num_shards == 1
+                num_shards == 1
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 
@@ -561,10 +603,10 @@ class GQNMazesDataset(BaseDataset):
 class MineRLDataset(BaseDataset):
     def __init__(self, path, shard, num_shards, T):
         assert (
-            shard == 0
+                shard == 0
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         assert (
-            num_shards == 1
+                num_shards == 1
         ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 

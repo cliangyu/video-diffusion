@@ -5,8 +5,13 @@
 ```bash
 ### UCF101 Dataset
 wget https://www.crcv.ucf.edu/data/UCF101/UCF101.rar --no-check-certificate
+wget https://www.crcv.ucf.edu/data/UCF101/UCF101TrainTestSplits-RecognitionTask.zip --no-check-certificate
+### configure dataset path
+python datasets/convert_ucf101.py
 ### BAIR Pushing Dataset
 wget http://rail.eecs.berkeley.edu/datasets/bair_robot_pushing_dataset_v0.tar
+### configure dataset path
+python datasets/convert_bair.py --data_dir /dataset_path
 ### MineRL Dataset
 pip install tensorflow
 pip install tensorflow_datasets
