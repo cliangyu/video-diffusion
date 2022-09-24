@@ -9,6 +9,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import scipy.io
 import torch
+from torch import randn, rand
 from numpy import *
 from scipy import *
 
@@ -44,7 +45,7 @@ def new_speeds(m1, m2, v1, v2):
 
 
 def norm(x):
-    return sqrt((x**2).sum())
+    return sqrt((x ** 2).sum())
 
 
 def sigmoid(x):
@@ -52,6 +53,8 @@ def sigmoid(x):
 
 
 SIZE = 10
+
+
 # size of bounding box: SIZE X SIZE.
 
 
@@ -123,7 +126,6 @@ def ar(x, y, z):
 
 
 def matricize(X, res, r=None):
-
     T, n = shape(X)[0:2]
     if r is None:
         r = array([1.2] * n)
@@ -134,8 +136,8 @@ def matricize(X, res, r=None):
 
     for t in range(T):
         for i in range(n):
-            A[t] += exp(-((((I - X[t, i, 0])**2 + (J - X[t, i, 1])**2) /
-                           (r[i]**2))**4))
+            A[t] += exp(-((((I - X[t, i, 0]) ** 2 + (J - X[t, i, 1]) ** 2) /
+                           (r[i] ** 2)) ** 4))
 
         A[t][A[t] > 1] = 1
     return A

@@ -43,8 +43,8 @@ def preprocess_frames(dataset_info, example, jpeg='False'):
         frames = tf.reshape(frames, (-1, dataset_info.sequence_size) +
                             dataset_image_dimensions)
         if 64 and 64 != dataset_info.frame_size:
-            frames = tf.reshape(frames, (-1, ) + dataset_image_dimensions)
-            new_frame_dimensions = (64, ) * 2 + (3, )
+            frames = tf.reshape(frames, (-1,) + dataset_image_dimensions)
+            new_frame_dimensions = (64,) * 2 + (3,)
             frames = tf.image.resize_bilinear(frames,
                                               new_frame_dimensions[:2],
                                               align_corners=True)
@@ -94,10 +94,10 @@ def encapsulate(frames, cameras):
 def convert_raw_to_numpy(dataset_info, raw_data, path, jpeg=False):
     feature_map = {
         'frames':
-        tf.FixedLenFeature(shape=dataset_info.sequence_size, dtype=tf.string),
+            tf.FixedLenFeature(shape=dataset_info.sequence_size, dtype=tf.string),
         'cameras':
-        tf.FixedLenFeature(shape=[dataset_info.sequence_size * 5],
-                           dtype=tf.float32),
+            tf.FixedLenFeature(shape=[dataset_info.sequence_size * 5],
+                               dtype=tf.float32),
     }
     example = tf.parse_single_example(raw_data, feature_map)
     frames = preprocess_frames(dataset_info, example, jpeg)
@@ -145,7 +145,7 @@ if __name__ == '__main__':
         for file in file_names:
             engine = tf.python_io.tf_record_iterator(file)
             for i, raw_data in enumerate(engine):
-                path = os.path.join(torch_split_path, f'{tot+i}.pt')
+                path = os.path.join(torch_split_path, f'{tot + i}.pt')
                 if not os.path.exists(path):
                     print(f' [-] converting scene {file}-{i} into {path}')
                     p = Process(
