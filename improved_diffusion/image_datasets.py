@@ -42,6 +42,7 @@ default_T_dict = {
     'minerl': 500,
     'mazes': 300,
     'mazes_cwvae': 300,
+    'ucf101': 300,
     'bouncy_balls': 100,
     'carla_with_traffic': 1000,
     'carla_no_traffic': 1000,
@@ -52,6 +53,7 @@ default_image_size_dict = {
     'minerl': 64,
     'mazes': 64,
     'mazes_cwvae': 64,
+    'ucf101': 64,
     'bouncy_balls': 32,
     'carla_with_traffic': 128,
     'carla_no_traffic': 128,
@@ -171,10 +173,15 @@ def load_video_data(
                                T=T)
     elif dataset_name == 'mazes_cwvae':
         data_path = os.path.join(data_path, 'train')
-        dataset = GQNMazesDataset(data_path,
-                                  shard=shard,
-                                  num_shards=num_shards,
-                                  T=T)
+        dataset = GQNMazesDataset(data_path, shard=shard, num_shards=num_shards, T=T)
+    elif dataset_name == 'ucf101':
+        # dataset = UCF101Dataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
+        config_path = os.path.join(data_path, 'train.json')
+        h5path = os.path.join(data_path, 'train.h5')
+        dataset = UCF101Dataset(config_path=config_path, h5path=h5path)
+    elif dataset_name == 'bair_pushing':
+        data_path = os.path.join(data_path, 'train')
+        dataset = BairPushingDataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
     elif dataset_name in [
         'carla_no_traffic',
         'carla_with_traffic',
@@ -476,6 +483,41 @@ class MazesDataset(BaseDataset):
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
         return video
+
+
+from torch.utils import data
+import h5py
+import pandas as pd
+
+
+class UCF101Dataset(data.Dataset):
+    def __init__(self, h5path, config_path, img_size=64):
+        self.h5file = h5py.File(h5path, 'r')
+        self.dset = self.h5file['image']
+        self.conf = pd.read_json(config_path)
+        self.ind = self.conf.index.tolist()
+        self.n_frames = 16
+        self.img_size = img_size
+
+    def __len__(self):
+        return len(self.conf)
+
+    def _crop_center(self, x):
+        if self.img_size == 64:
+            x = x[:, :, :, 10:10 + self.img_size]
+        elif self.img_size == 192:
+            x = x[:, :, :, 32:32 + self.img_size]
+        assert x.shape[2] == self.img_size
+        assert x.shape[3] == self.img_size
+        return x
+
+    def __getitem__(self, i):
+        mov_info = self.conf.loc[self.ind[i]]
+        length = mov_info.end - mov_info.start
+        offset = np.random.randint(length - self.n_frames) if length > self.n_frames else 0
+        x = self.dset[mov_info.start + offset: mov_info.start + offset + self.n_frames]
+        x = self._crop_center(x)
+        return torch.tensor((x - 128.0) / 128.0, dtype=torch.float)
 
 
 class BairPushingDataset(MazesDataset):

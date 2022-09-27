@@ -68,7 +68,7 @@ def main():
         start = 0
         for ind, row in frame.iterrows():
             print('Processing {} / {}'.format(ind, len(frame)))
-            path = os.path.join(src_dir, row['filename'])
+            path = os.path.join(src_dir, row['category'], row['filename'])
             video = process_video(path)
             T = len(video)
             dset[start:(start + T)] = video
