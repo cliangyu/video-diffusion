@@ -109,7 +109,7 @@ class TrainLoop:
                          lr=self.lr,
                          weight_decay=self.weight_decay)
         self.lr_scheduler = th.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.opt, 250000)
+            self.opt, 500000)
         if self.resume_checkpoint:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
@@ -412,8 +412,9 @@ class TrainLoop:
                 if os.environ.get('DIFFUSION_TRAINING_TEST',
                                   '') and self.step > 0:
                     return
-            if (self.sample_interval is not None and self.step != 0 and
-                (self.step % self.sample_interval == 0 or self.step == 5)):
+            if (self.sample_interval is not None and self.step != 0
+                    and (self.step % self.sample_interval == 0
+                         or self.step == 5)):  # noqa
                 self.log_samples()
                 logger.logkv('timing/time_between_samples',
                              time() - last_sample_time)
@@ -640,7 +641,6 @@ class TrainLoop:
         latent_mask = make_zeros()
         kinda_marg_mask = make_zeros()
         n_obs = self.max_frames // 3
-        n_latent = self.max_frames - n_obs
         for i in range(n_masks):
             spacing = (1 if n_masks == 1 else int(
                 (batch.shape[1] // self.max_frames)**(i / (n_masks - 1))))
@@ -693,9 +693,9 @@ class TrainLoop:
                             dim=0,
                             chunks=self.n_valid_batches * self.n_valid_repeats)
 
-        for x0, fi, om, lm, kmm in zip(*map(
-                chunk,
-            [batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask])):
+        for x0, fi, om, lm, kmm in zip(*map(chunk, [
+                batch, frame_indices, obs_mask, latent_mask, kinda_marg_mask
+        ])):  # noqa
             s, a = sample_fn(
                 self.model,
                 x0.shape,
@@ -759,7 +759,7 @@ class TrainLoop:
             )
         for k, attn in frame_attn.items():
             fig = Figure(figsize=(5, 4.5 * len(batch)))
-            canvas = FigureCanvas(fig)
+            canvas = FigureCanvas(fig)  # noqa
             axes = [
                 fig.add_subplot(len(batch), 1, i + 1)
                 for i in range(len(batch))

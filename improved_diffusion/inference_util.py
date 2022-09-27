@@ -7,8 +7,8 @@ import torch
 
 def not_spatial_average(in_tens, keepdim=True):
     B, C, H, W = in_tens.shape
-    reshaped = (in_tens.view(B, C * H * W, 1, 1) if keepdim else in_tens.view(
-        B, C * H * W))
+    reshaped = (in_tens.reshape(B, C * H * W, 1, 1)
+                if keepdim else in_tens.reshape(B, C * H * W))
     return reshaped / (H * W)**0.5
 
 
@@ -387,7 +387,6 @@ class HierarchyNLevel(InferenceStrategyBase):
                 raise Exception(
                     'Cannot condition before and after even with step size of 1'
                 )
-            sample_every = self.sample_every
             self._step_size -= 1
             result = self.next_indices()
             self._step_size += 1
@@ -481,7 +480,6 @@ class AdaptiveHierarchyNLevel(AdaptiveInferenceStrategyBase, HierarchyNLevel):
                 raise Exception(
                     'Cannot condition before and after even with step size of 1'
                 )
-            sample_every = self.sample_every
             self._step_size -= 1
             result = self.next_indices()
             self._step_size += 1
