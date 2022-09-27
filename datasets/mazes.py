@@ -3,7 +3,7 @@
    https://github.com/iShohei220/torch-gqn/blob/c0156c72f4e63ca6523ab8d9a6f6b3ce9e0e391d/dataset/convert2torch.py"""
 
 from pathlib import Path
-
+import os
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
