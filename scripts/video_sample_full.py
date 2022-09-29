@@ -74,117 +74,124 @@ def infer_video(
     if 'goal-directed' in mode:
         samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
-    # vertical diffusion
-    frame_indices_iterator = iter(inference_util.inference_strategies[mode](
-        video_length=T,
-        num_obs=obs_length,
-        max_frames=max_frames,
-        step_size=step_size,
-        optimal_schedule_path=optimal_schedule_path,
-        **adaptive_kwargs,
-    ))
-    vertical_diff_timesteps = list(range(
-        diffusion.num_timesteps))[::-1][:args.vertical_steps]
     all_timestep_samples = torch.zeros(
         [B, diffusion.num_timesteps, T, C, H, W]).cpu()
     all_timestep_samples[:, :, :obs_length] = (
         samples[:, :obs_length].unsqueeze(1).expand(-1,
                                                     diffusion.num_timesteps,
                                                     -1, -1, -1, -1))
-    while True:
-        if 'adaptive' in mode:
-            frame_indices_iterator.set_videos(samples.to(batch.device))
-        try:
-            obs_frame_indices, latent_frame_indices = next(
-                frame_indices_iterator)
-        except StopIteration:
-            break
-        logger.info(f'Conditioning on {sorted(obs_frame_indices)} frames, '
-                    f'predicting {sorted(latent_frame_indices)}.\n')
-        # Prepare network's input
-        if 'adaptive' in mode:
-            frame_indices = torch.cat(
-                [
-                    torch.tensor(obs_frame_indices),
-                    torch.tensor(latent_frame_indices)
+    if args.vertical_steps > 0:
+        # vertical diffusion
+        frame_indices_iterator = iter(
+            inference_util.inference_strategies[mode](
+                video_length=T,
+                num_obs=obs_length,
+                max_frames=max_frames,
+                step_size=step_size,
+                optimal_schedule_path=optimal_schedule_path,
+                **adaptive_kwargs,
+            ))
+        vertical_diff_timesteps = list(range(
+            diffusion.num_timesteps))[::-1][:args.vertical_steps]
+
+        while True:
+            if 'adaptive' in mode:
+                frame_indices_iterator.set_videos(samples.to(batch.device))
+            try:
+                obs_frame_indices, latent_frame_indices = next(
+                    frame_indices_iterator)
+            except StopIteration:
+                break
+            logger.info(f'Conditioning on {sorted(obs_frame_indices)} frames, '
+                        f'predicting {sorted(latent_frame_indices)}.\n')
+            # Prepare network's input
+            if 'adaptive' in mode:
+                frame_indices = torch.cat(
+                    [
+                        torch.tensor(obs_frame_indices),
+                        torch.tensor(latent_frame_indices)
+                    ],
+                    dim=1,
+                )
+                x0 = torch.stack(
+                    [samples[i, fi] for i, fi in enumerate(frame_indices)],
+                    dim=0).clone()
+                obs_mask, latent_mask, kinda_marg_mask = get_masks(
+                    x0, len(obs_frame_indices[0]))
+                n_latent = len(latent_frame_indices[0])
+            else:
+                x0 = torch.cat([
+                    samples[:, obs_frame_indices],
+                    samples[:, latent_frame_indices]
                 ],
-                dim=1,
+                               dim=1).clone()
+                frame_indices = torch.cat(
+                    [
+                        torch.tensor(obs_frame_indices),
+                        torch.tensor(latent_frame_indices)
+                    ],
+                    dim=0,
+                ).repeat((B, 1))
+                obs_mask, latent_mask, kinda_marg_mask = get_masks(
+                    x0, len(obs_frame_indices))
+                n_latent = len(latent_frame_indices)
+            # Prepare masks
+            logger.info(
+                f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
+            logger.info(
+                f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}"
             )
-            x0 = torch.stack(
-                [samples[i, fi] for i, fi in enumerate(frame_indices)],
-                dim=0).clone()
-            obs_mask, latent_mask, kinda_marg_mask = get_masks(
-                x0, len(obs_frame_indices[0]))
-            n_latent = len(latent_frame_indices[0])
-        else:
-            x0 = torch.cat([
-                samples[:, obs_frame_indices], samples[:, latent_frame_indices]
-            ],
-                           dim=1).clone()
-            frame_indices = torch.cat(
-                [
-                    torch.tensor(obs_frame_indices),
-                    torch.tensor(latent_frame_indices)
-                ],
-                dim=0,
-            ).repeat((B, 1))
-            obs_mask, latent_mask, kinda_marg_mask = get_masks(
-                x0, len(obs_frame_indices))
-            n_latent = len(latent_frame_indices)
-        # Prepare masks
-        logger.info(f"{'Frame indices':20}: {frame_indices[0].cpu().numpy()}.")
-        logger.info(
-            f"{'Observation mask':20}: {obs_mask[0].cpu().int().numpy().squeeze()}"
-        )
-        logger.info(
-            f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}"
-        )
-        logger.info('-' * 40)
-        # Move tensors to the correct device
-        [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [
-            xyz.to(batch.device) for xyz in
-            [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]
-        ]
+            logger.info(
+                f"{'Latent mask':20}: {latent_mask[0].cpu().int().numpy().squeeze()}"
+            )
+            logger.info('-' * 40)
+            # Move tensors to the correct device
+            [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices] = [
+                xyz.to(batch.device) for xyz in
+                [x0, obs_mask, latent_mask, kinda_marg_mask, frame_indices]
+            ]
 
-        all_timestep_local_samples = []
-        local_samples = x0.clone()
-        for timestep in vertical_diff_timesteps:
-            local_samples = diffusion.p_sample(
-                model,
-                local_samples,
-                t=torch.tensor([timestep] * x0.shape[0],
-                               device=next(model.parameters()).device),
-                clip_denoised=True,
-                model_kwargs=dict(
-                    frame_indices=frame_indices,
-                    x0=x0,
-                    obs_mask=obs_mask,
-                    latent_mask=latent_mask,
-                    kinda_marg_mask=kinda_marg_mask,
-                    x_t_minus_1=x0,  # placeholder, x_t_minus_1 not allowed
-                    observed_frames='x_0',
-                ),
-                return_attn_weights=False,
-                use_gradient_method=use_gradient_method,
-            )['sample']
-            all_timestep_local_samples.append(local_samples.clone())
-        all_timestep_local_samples = torch.stack(all_timestep_local_samples,
-                                                 dim=1)  # BxTimestepxTxCxHxW
+            all_timestep_local_samples = []
+            local_samples = x0.clone()
+            for timestep in vertical_diff_timesteps:
+                local_samples = diffusion.p_sample(
+                    model,
+                    local_samples,
+                    t=torch.tensor([timestep] * x0.shape[0],
+                                   device=next(model.parameters()).device),
+                    clip_denoised=True,
+                    model_kwargs=dict(
+                        frame_indices=frame_indices,
+                        x0=x0,
+                        obs_mask=obs_mask,
+                        latent_mask=latent_mask,
+                        kinda_marg_mask=kinda_marg_mask,
+                        x_t_minus_1=x0,  # placeholder, x_t_minus_1 not allowed
+                        observed_frames='x_0',
+                    ),
+                    return_attn_weights=False,
+                    use_gradient_method=use_gradient_method,
+                )['sample']
+                all_timestep_local_samples.append(local_samples.clone())
+            all_timestep_local_samples = torch.stack(
+                all_timestep_local_samples, dim=1)  # BxTimestepxTxCxHxW
 
-        # Fill in the generated frames
-        if 'adaptive' in mode:
-            n_obs = len(obs_frame_indices[0])
-            for i, li in enumerate(latent_frame_indices):
-                samples[i, li] = local_samples[i, n_obs:].cpu()
-                all_timestep_samples[i, :len(vertical_diff_timesteps),
-                                     li] = all_timestep_local_samples[
-                                         i, :len(vertical_diff_timesteps),
-                                         n_obs:].cpu()
-        else:
-            samples[:, latent_frame_indices] = local_samples[:,
-                                                             -n_latent:].cpu()
-            all_timestep_samples[:, :len(vertical_diff_timesteps), latent_frame_indices] = \
-                all_timestep_local_samples[:, :len(vertical_diff_timesteps), -n_latent:].cpu()
+            # Fill in the generated frames
+            if 'adaptive' in mode:
+                n_obs = len(obs_frame_indices[0])
+                for i, li in enumerate(latent_frame_indices):
+                    samples[i, li] = local_samples[i, n_obs:].cpu()
+                    all_timestep_samples[i, :len(vertical_diff_timesteps),
+                                         li] = all_timestep_local_samples[
+                                             i, :len(vertical_diff_timesteps),
+                                             n_obs:].cpu()
+            else:
+                samples[:,
+                        latent_frame_indices] = local_samples[:,
+                                                              -n_latent:].cpu(
+                                                              )
+                all_timestep_samples[:, :len(vertical_diff_timesteps), latent_frame_indices] = \
+                    all_timestep_local_samples[:, :len(vertical_diff_timesteps), -n_latent:].cpu()
 
     # horizontal diffusion
     horizontal_diff_timesteps = list(range(
@@ -299,8 +306,8 @@ def infer_video(
         # all_timestep_samples[:, timestep] = samples.clone()
     all_horizontal_timestep_samples = torch.stack(
         all_horizontal_timestep_samples, dim=1)  # BxHorizontalTimestepxTxCxHxW
-    all_timestep_samples[:, len(vertical_diff_timesteps
-                                ):] = all_horizontal_timestep_samples
+    all_timestep_samples[:, args.
+                         vertical_steps:] = all_horizontal_timestep_samples
     return samples.numpy(), all_timestep_samples.numpy()
 
 
