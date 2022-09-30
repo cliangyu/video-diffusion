@@ -253,23 +253,6 @@ def main(args,
                     use_gradient_method=use_gradient_method,
                 )
 
-                # compute errors
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(q_sample_file_names[i],
-                                all_timestep_q_sample[i])
-                        logger.info(f'*** Saved {q_sample_file_names[i]} ***')
-                    else:
-                        logger.info(f'Skipped {q_sample_file_names[i]}')
-
-                error = all_timestep_q_sample - all_timestep_recon
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(error_file_names[i], error[i])
-                        logger.info(f'*** Saved {error_file_names[i]} ***')
-                    else:
-                        logger.info(f'Skipped {error_file_names[i]}')
-
                 recon = ((recon - drange[0]) / (drange[1] - drange[0]) * 255
                          )  # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
@@ -280,17 +263,37 @@ def main(args,
                     else:
                         logger.info(f'Skipped {output_filenames[i]}')
 
-                all_timestep_recon = ((all_timestep_recon - drange[0]) /
-                                      (drange[1] - drange[0]) * 255
-                                      )  # recon with pixel values in [0, 255]
-                all_timestep_recon = all_timestep_recon.astype(np.uint8)
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(all_timestep_output_filenames[i],
-                                all_timestep_recon[i])
-                        logger.info(f'*** Saved {output_filenames[i]} ***')
-                    else:
-                        logger.info(f'Skipped {output_filenames[i]}')
+                # compute errors
+                if args.save_all_timesteps:
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(q_sample_file_names[i],
+                                    all_timestep_q_sample[i])
+                            logger.info(
+                                f'*** Saved {q_sample_file_names[i]} ***')
+                        else:
+                            logger.info(f'Skipped {q_sample_file_names[i]}')
+
+                    error = all_timestep_q_sample - all_timestep_recon
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(error_file_names[i], error[i])
+                            logger.info(f'*** Saved {error_file_names[i]} ***')
+                        else:
+                            logger.info(f'Skipped {error_file_names[i]}')
+
+                    all_timestep_recon = (
+                        (all_timestep_recon - drange[0]) /
+                        (drange[1] - drange[0]) * 255
+                    )  # recon with pixel values in [0, 255]
+                    all_timestep_recon = all_timestep_recon.astype(np.uint8)
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(all_timestep_output_filenames[i],
+                                    all_timestep_recon[i])
+                            logger.info(f'*** Saved {output_filenames[i]} ***')
+                        else:
+                            logger.info(f'Skipped {output_filenames[i]}')
 
         cnt += batch_size
 
@@ -505,6 +508,8 @@ if __name__ == '__main__':
         choices=['x_0'],
         help='The ground truth observed frames to use. Default is to use x_0.',
     )
+    parser.add_argument('--save_all_timesteps', action='store_true')
+
     args = parser.parse_args()
 
     args.eval_dir = test_util.get_model_results_path(
