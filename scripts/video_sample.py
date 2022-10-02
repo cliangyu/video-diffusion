@@ -79,12 +79,14 @@ def infer_video(
         **adaptive_kwargs,
     ))
     timesteps = list(range(diffusion.num_timesteps))[::-1]
-    all_timestep_samples = torch.zeros(
-        [B, diffusion.num_timesteps, T, C, H, W]).cpu()
-    all_timestep_samples[:, :, :obs_length] = (
-        samples[:, :obs_length].unsqueeze(1).expand(-1,
-                                                    diffusion.num_timesteps,
-                                                    -1, -1, -1, -1))
+    if args.save_all_timesteps:
+        all_timestep_samples = torch.zeros(
+            [B, diffusion.num_timesteps, T, C, H, W]).cpu()
+        all_timestep_samples[:, :, :obs_length] = (
+            samples[:, :obs_length].unsqueeze(1).expand(
+                -1, diffusion.num_timesteps, -1, -1, -1, -1))
+    else:
+        all_timestep_samples = torch.zeros([1])
 
     while True:
         if 'adaptive' in mode:
@@ -162,22 +164,27 @@ def infer_video(
                 return_attn_weights=False,
                 use_gradient_method=use_gradient_method,
             )['sample']
-            all_timestep_local_samples.append(local_samples.clone())
-        all_timestep_local_samples = torch.stack(all_timestep_local_samples,
-                                                 dim=1)  # BxTimestepxTxCxHxW
+            if args.save_all_timesteps:
+                all_timestep_local_samples.append(local_samples.clone())
+        if args.save_all_timesteps:
+            all_timestep_local_samples = torch.stack(
+                all_timestep_local_samples, dim=1)  # BxTimestepxTxCxHxW
 
         # Fill in the generated frames
         if 'adaptive' in mode:
             n_obs = len(obs_frame_indices[0])
             for i, li in enumerate(latent_frame_indices):
                 samples[i, li] = local_samples[i, n_obs:].cpu()
-                all_timestep_samples[i, :, li] = all_timestep_local_samples[
-                    i, :, n_obs:].cpu()
+                if args.save_all_timesteps:
+                    all_timestep_samples[
+                        i, :, li] = all_timestep_local_samples[i, :,
+                                                               n_obs:].cpu()
         else:
             samples[:, latent_frame_indices] = local_samples[:,
                                                              -n_latent:].cpu()
-            all_timestep_samples[:, :, latent_frame_indices] = \
-                all_timestep_local_samples[:, :, -n_latent:].cpu()
+            if args.save_all_timesteps:
+                all_timestep_samples[:, :, latent_frame_indices] = \
+                    all_timestep_local_samples[:, :, -n_latent:].cpu()
     return samples.numpy(), all_timestep_samples.numpy()
 
 
@@ -231,15 +238,16 @@ def main(args,
                 batch = batch.to(args.device)
 
                 # q_sample the whole video
-                timesteps = list(range(diffusion.num_timesteps))
-                all_timestep_q_sample = []
-                for timestep in timesteps:
-                    t = torch.tensor(timestep).to(args.device)
-                    single_timestep_q_sample = diffusion.q_sample(
-                        batch, t=t).detach().cpu()
-                    all_timestep_q_sample.append(single_timestep_q_sample)
-                all_timestep_q_sample = torch.stack(all_timestep_q_sample,
-                                                    dim=1).numpy()
+                if args.save_all_timesteps:
+                    timesteps = list(range(diffusion.num_timesteps))
+                    all_timestep_q_sample = []
+                    for timestep in timesteps:
+                        t = torch.tensor(timestep).to(args.device)
+                        single_timestep_q_sample = diffusion.q_sample(
+                            batch, t=t).detach().cpu()
+                        all_timestep_q_sample.append(single_timestep_q_sample)
+                    all_timestep_q_sample = torch.stack(all_timestep_q_sample,
+                                                        dim=1).numpy()
 
                 recon, all_timestep_recon = infer_video(
                     mode=args.inference_mode,
@@ -481,6 +489,12 @@ if __name__ == '__main__':
         'Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.',
     )
     parser.add_argument(
+        '--task_id',
+        type=int,
+        default=None,
+        help='Sample batch id.',
+    )
+    parser.add_argument(
         '--just_visualise',
         action='store_true',
         help='Make visualisation of sampling mode instead of doing it.',
@@ -558,9 +572,9 @@ if __name__ == '__main__':
         dataset_name=model_args.dataset, T=args.T)
     logger.info(f'Dataset size = {len(dataset)}')
     # Prepare the indices
-    if args.indices is None and 'SLURM_ARRAY_TASK_ID' in os.environ:
+    if args.indices is None and args.task_id is not None:
         assert args.subset_size is None
-        task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+        task_id = args.task_id
         args.indices = list(
             range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
         logger.info(f'Only generating predictions for the batch #{task_id}.')

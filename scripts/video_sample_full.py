@@ -74,12 +74,15 @@ def infer_video(
     if 'goal-directed' in mode:
         samples[:, -5] = batch[:, -5]
     adaptive_kwargs = dict(distance='lpips') if 'adaptive' in mode else {}
-    all_timestep_samples = torch.zeros(
-        [B, diffusion.num_timesteps, T, C, H, W]).cpu()
-    all_timestep_samples[:, :, :obs_length] = (
-        samples[:, :obs_length].unsqueeze(1).expand(-1,
-                                                    diffusion.num_timesteps,
-                                                    -1, -1, -1, -1))
+    if args.save_all_timesteps:
+        all_timestep_samples = torch.zeros(
+            [B, diffusion.num_timesteps, T, C, H, W]).cpu()
+        all_timestep_samples[:, :, :obs_length] = (
+            samples[:, :obs_length].unsqueeze(1).expand(
+                -1, diffusion.num_timesteps, -1, -1, -1, -1))
+    else:
+        all_timestep_samples = torch.zeros([1])
+
     if args.vertical_steps > 0:
         # vertical diffusion
         frame_indices_iterator = iter(
@@ -172,26 +175,31 @@ def infer_video(
                     return_attn_weights=False,
                     use_gradient_method=use_gradient_method,
                 )['sample']
-                all_timestep_local_samples.append(local_samples.clone())
-            all_timestep_local_samples = torch.stack(
-                all_timestep_local_samples, dim=1)  # BxTimestepxTxCxHxW
+                if args.save_all_timesteps:
+                    all_timestep_local_samples.append(local_samples.clone())
+            if args.save_all_timesteps:
+                all_timestep_local_samples = torch.stack(
+                    all_timestep_local_samples, dim=1)  # BxTimestepxTxCxHxW
 
             # Fill in the generated frames
             if 'adaptive' in mode:
                 n_obs = len(obs_frame_indices[0])
                 for i, li in enumerate(latent_frame_indices):
                     samples[i, li] = local_samples[i, n_obs:].cpu()
-                    all_timestep_samples[i, :len(vertical_diff_timesteps),
-                                         li] = all_timestep_local_samples[
-                                             i, :len(vertical_diff_timesteps),
-                                             n_obs:].cpu()
+                    if args.save_all_timesteps:
+                        all_timestep_samples[
+                            i, :len(vertical_diff_timesteps),
+                            li] = all_timestep_local_samples[
+                                i, :len(vertical_diff_timesteps),
+                                n_obs:].cpu()
             else:
                 samples[:,
                         latent_frame_indices] = local_samples[:,
                                                               -n_latent:].cpu(
                                                               )
-                all_timestep_samples[:, :len(vertical_diff_timesteps), latent_frame_indices] = \
-                    all_timestep_local_samples[:, :len(vertical_diff_timesteps), -n_latent:].cpu()
+                if args.save_all_timesteps:
+                    all_timestep_samples[:, :len(vertical_diff_timesteps), latent_frame_indices] = \
+                        all_timestep_local_samples[:, :len(vertical_diff_timesteps), -n_latent:].cpu()
 
     # horizontal diffusion
     horizontal_diff_timesteps = list(range(
@@ -302,12 +310,14 @@ def infer_video(
                         latent_frame_indices] = local_samples[:,
                                                               -n_latent:].cpu(
                                                               )
-        all_horizontal_timestep_samples.append(samples.clone())
-        # all_timestep_samples[:, timestep] = samples.clone()
-    all_horizontal_timestep_samples = torch.stack(
-        all_horizontal_timestep_samples, dim=1)  # BxHorizontalTimestepxTxCxHxW
-    all_timestep_samples[:, args.
-                         vertical_steps:] = all_horizontal_timestep_samples
+        if args.save_all_timesteps:
+            all_horizontal_timestep_samples.append(samples.clone())
+    if args.save_all_timesteps:
+        all_horizontal_timestep_samples = torch.stack(
+            all_horizontal_timestep_samples,
+            dim=1)  # BxHorizontalTimestepxTxCxHxW
+        all_timestep_samples[:, args.
+                             vertical_steps:] = all_horizontal_timestep_samples
     return samples.numpy(), all_timestep_samples.numpy()
 
 
@@ -361,15 +371,16 @@ def main(args,
                 batch = batch.to(args.device)
 
                 # q_sample the whole video
-                timesteps = list(range(diffusion.num_timesteps))
-                all_timestep_q_sample = []
-                for timestep in timesteps:
-                    t = torch.tensor(timestep).to(args.device)
-                    single_timestep_q_sample = diffusion.q_sample(
-                        batch, t=t).detach().cpu()
-                    all_timestep_q_sample.append(single_timestep_q_sample)
-                all_timestep_q_sample = torch.stack(all_timestep_q_sample,
-                                                    dim=1).numpy()
+                if args.save_all_timesteps:
+                    timesteps = list(range(diffusion.num_timesteps))
+                    all_timestep_q_sample = []
+                    for timestep in timesteps:
+                        t = torch.tensor(timestep).to(args.device)
+                        single_timestep_q_sample = diffusion.q_sample(
+                            batch, t=t).detach().cpu()
+                        all_timestep_q_sample.append(single_timestep_q_sample)
+                    all_timestep_q_sample = torch.stack(all_timestep_q_sample,
+                                                        dim=1).numpy()
 
                 recon, all_timestep_recon = infer_video(
                     mode=args.inference_mode,
@@ -383,23 +394,6 @@ def main(args,
                     use_gradient_method=use_gradient_method,
                 )
 
-                # compute errors
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(q_sample_file_names[i],
-                                all_timestep_q_sample[i])
-                        logger.info(f'*** Saved {q_sample_file_names[i]} ***')
-                    else:
-                        logger.info(f'Skipped {q_sample_file_names[i]}')
-
-                error = all_timestep_q_sample - all_timestep_recon
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(error_file_names[i], error[i])
-                        logger.info(f'*** Saved {error_file_names[i]} ***')
-                    else:
-                        logger.info(f'Skipped {error_file_names[i]}')
-
                 recon = ((recon - drange[0]) / (drange[1] - drange[0]) * 255
                          )  # recon with pixel values in [0, 255]
                 recon = recon.astype(np.uint8)
@@ -410,17 +404,40 @@ def main(args,
                     else:
                         logger.info(f'Skipped {output_filenames[i]}')
 
-                all_timestep_recon = ((all_timestep_recon - drange[0]) /
-                                      (drange[1] - drange[0]) * 255
-                                      )  # recon with pixel values in [0, 255]
-                all_timestep_recon = all_timestep_recon.astype(np.uint8)
-                for i in range(batch_size):
-                    if todo[i]:
-                        np.save(all_timestep_output_filenames[i],
-                                all_timestep_recon[i])
-                        logger.info(f'*** Saved {output_filenames[i]} ***')
-                    else:
-                        logger.info(f'Skipped {output_filenames[i]}')
+                # compute errors
+                if args.save_all_timesteps:
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(q_sample_file_names[i],
+                                    all_timestep_q_sample[i])
+                            logger.info(
+                                f'*** Saved {q_sample_file_names[i]} ***')
+                        else:
+                            logger.info(f'Skipped {q_sample_file_names[i]}')
+
+                    error = all_timestep_q_sample - all_timestep_recon
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(error_file_names[i], error[i])
+                            logger.info(f'*** Saved {error_file_names[i]} ***')
+                        else:
+                            logger.info(f'Skipped {error_file_names[i]}')
+
+                    all_timestep_recon = (
+                        (all_timestep_recon - drange[0]) /
+                        (drange[1] - drange[0]) * 255
+                    )  # recon with pixel values in [0, 255]
+                    all_timestep_recon = all_timestep_recon.astype(np.uint8)
+                    for i in range(batch_size):
+                        if todo[i]:
+                            np.save(all_timestep_output_filenames[i],
+                                    all_timestep_recon[i])
+                            logger.info(
+                                f'*** Saved {all_timestep_output_filenames[i]} ***'
+                            )
+                        else:
+                            logger.info(
+                                f'Skipped {all_timestep_output_filenames[i]}')
 
         cnt += batch_size
 
@@ -608,6 +625,12 @@ if __name__ == '__main__':
         'Sampled images will have this specific index. Used for parallel sampling on multiple machines. If this argument is given, --num_samples is ignored.',
     )
     parser.add_argument(
+        '--task_id',
+        type=int,
+        default=None,
+        help='Sample batch id.',
+    )
+    parser.add_argument(
         '--just_visualise',
         action='store_true',
         help='Make visualisation of sampling mode instead of doing it.',
@@ -643,6 +666,8 @@ if __name__ == '__main__':
         help=
         'Number of vertical diffusion steps to take in the latent space. Default is 0.',
     )
+    parser.add_argument('--save_all_timesteps', action='store_true')
+
     args = parser.parse_args()
 
     args.eval_dir = test_util.get_model_results_path(
@@ -694,9 +719,9 @@ if __name__ == '__main__':
         dataset_name=model_args.dataset, T=args.T)
     logger.info(f'Dataset size = {len(dataset)}')
     # Prepare the indices
-    if args.indices is None and 'SLURM_ARRAY_TASK_ID' in os.environ:
+    if args.indices is None and args.task_id is not None:
         assert args.subset_size is None
-        task_id = int(os.environ['SLURM_ARRAY_TASK_ID'])
+        task_id = args.task_id
         args.indices = list(
             range(task_id * args.batch_size, (task_id + 1) * args.batch_size))
         logger.info(f'Only generating predictions for the batch #{task_id}.')
