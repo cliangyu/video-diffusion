@@ -171,7 +171,8 @@ def create_argparser():
         1,  # the random seed is never set, but this lets us run sweeps with is as if it controls the seed
         # the input of observed frames, case 1: 'x_0', case 2: 'x_t', case 3: 'x_t_minus_1'
         observed_frames='x_t_minus_1',
-        data_path=None,  # assign data path
+        data_path=None,  # assign data path,
+        use_gradient_method=True,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

@@ -262,8 +262,7 @@ class GaussianDiffusion:
             x.requires_grad_(True)
             obs_mask = model_kwargs['obs_mask']
             new_model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
-            new_model_kwargs[
-                'latent_mask'] = obs_mask + model_kwargs['latent_mask']
+            new_model_kwargs['latent_mask'] = obs_mask + model_kwargs['latent_mask']
 
         with th.enable_grad() if use_gradient_method else th.no_grad():
             B, C = x.shape[:2]
