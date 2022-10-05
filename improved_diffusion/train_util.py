@@ -60,6 +60,7 @@ class TrainLoop:
         mask_distribution='differently-spaced-groups',
         pad_with_random_frames=True,
         observed_frames='x_t_minus_1',
+        use_gradient_method=False,
         args=None,
     ):
         current_rank = dist.get_rank() if dist.is_initialized() else 0
@@ -100,6 +101,7 @@ class TrainLoop:
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
         self.sync_cuda = th.cuda.is_available()
         self.observed_frames = observed_frames
+        self.use_gradient_method = use_gradient_method
 
         self._load_and_sync_parameters()
         if self.use_fp16:

@@ -258,11 +258,14 @@ class GaussianDiffusion:
             model_kwargs = {}
 
         new_model_kwargs = {k: v for k, v in model_kwargs.items()}
+        use_gradient_method = True  # debug
+
         if use_gradient_method:
             x.requires_grad_(True)
             obs_mask = model_kwargs['obs_mask']
             new_model_kwargs['obs_mask'] = th.zeros_like(obs_mask)
-            new_model_kwargs['latent_mask'] = obs_mask + model_kwargs['latent_mask']
+            new_model_kwargs[
+                'latent_mask'] = obs_mask + model_kwargs['latent_mask']
 
         with th.enable_grad() if use_gradient_method else th.no_grad():
             B, C = x.shape[:2]
@@ -344,12 +347,12 @@ class GaussianDiffusion:
                     pred_xstart.shape == x.shape)
 
             if use_gradient_method:
-                pixelwise_diff_to_obs = (pred_xstart -
-                                         model_kwargs['x0']) * obs_mask
+                pixelwise_diff_to_obs = (
+                    pred_xstart - model_kwargs['x_t_minus_1']) * obs_mask
                 obs_mismatch = (pixelwise_diff_to_obs**2).sum()
                 obs_mismatch.backward()
                 g = x.grad
-                weighting_factor = 1.
+                weighting_factor = 10
                 vdm_alpha_t = th.sqrt(
                     _extract_into_tensor(self.alphas_cumprod, t, x.shape))
                 model_mean = model_mean - weighting_factor * vdm_alpha_t * g / 2
