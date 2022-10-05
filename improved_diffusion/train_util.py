@@ -474,6 +474,7 @@ class TrainLoop:
                 },
                 latent_mask=loss_mask,
                 eval_mask=latent_mask,
+                obs_mask=obs_mask,
             )
 
             if last_batch or not self.use_ddp:
