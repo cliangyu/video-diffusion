@@ -15,3 +15,4 @@ __pycache__/
 carla/
 results
 .tfhub_cache
+datasets/downloads/

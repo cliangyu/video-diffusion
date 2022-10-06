@@ -208,6 +208,8 @@ class GaussianDiffusion:
     def q_posterior_mean_variance(self, x_start, x_t, t):
         """Compute the mean and variance of the diffusion posterior:
 
+        DDPM paper's equation 6.
+
         q(x_{t-1} | x_t, x_0)
         """
         assert x_start.shape == x_t.shape
@@ -334,6 +336,7 @@ class GaussianDiffusion:
                 if self.model_mean_type == ModelMeanType.START_X:
                     pred_xstart = process_xstart(model_output)
                 else:
+                    # compute exact x_{t-1}
                     pred_xstart = process_xstart(
                         self._predict_xstart_from_eps(x_t=x,
                                                       t=t,
@@ -348,13 +351,12 @@ class GaussianDiffusion:
 
             if use_gradient_method:
                 pixelwise_diff_to_obs = (
-                    pred_xstart - model_kwargs['x_t_minus_1']) * obs_mask
+                    model_mean - model_kwargs['x_t_minus_1']) * obs_mask
                 obs_mismatch = (pixelwise_diff_to_obs**2).sum()
                 obs_mismatch.backward()
                 g = x.grad
                 weighting_factor = 10
-                vdm_alpha_t = th.sqrt(
-                    _extract_into_tensor(self.alphas_cumprod, t, x.shape))
+                vdm_alpha_t = _extract_into_tensor(self.alphas, t, x.shape)
                 model_mean = model_mean - weighting_factor * vdm_alpha_t * g / 2
 
         return {
@@ -366,6 +368,9 @@ class GaussianDiffusion:
         }
 
     def _predict_xstart_from_eps(self, x_t, t, eps):
+        # x_t(x_0, eps) = sqrt_alphas_cumprod * x_0 + sqrt(1 - alphas_cumprod) * eps
+        # => x_0 = x_t - sqrt(1 - alphas_cumprod) * eps / sqrt_alphas_cumprod
+        # => x_0 = sqrt_recip_alphas_cumprod * (x_t - sqrt(1 - alphas_cumprod) * eps)
         assert x_t.shape == eps.shape
         return (_extract_into_tensor(self.sqrt_recip_alphas_cumprod, t,
                                      x_t.shape) * x_t -
