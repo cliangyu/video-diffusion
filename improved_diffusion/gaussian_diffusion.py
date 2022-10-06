@@ -336,7 +336,6 @@ class GaussianDiffusion:
                 if self.model_mean_type == ModelMeanType.START_X:
                     pred_xstart = process_xstart(model_output)
                 else:
-                    # compute exact x_{t-1}
                     pred_xstart = process_xstart(
                         self._predict_xstart_from_eps(x_t=x,
                                                       t=t,
@@ -435,7 +434,8 @@ class GaussianDiffusion:
         nonzero_mask = ((t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
                         )  # no noise when t == 0
         sample = out['mean'] + nonzero_mask * th.exp(
-            0.5 * out['log_variance']) * noise  # Add noise to x_{t-1}, why??
+            0.5 * out['log_variance']
+        ) * noise  # sample is exact sample from x_{t-1}, out is mean/variance of p(x_{t-1}|x_t).
         return {
             'sample': sample,
             'pred_xstart': out['pred_xstart'],

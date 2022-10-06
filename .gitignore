@@ -16,3 +16,4 @@ carla/
 results
 .tfhub_cache
 datasets/downloads/
+datasets/gqn_mazes/
