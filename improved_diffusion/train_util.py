@@ -21,6 +21,7 @@ from . import dist_util, logger
 from .fp16_util import (make_master_params, master_params_to_model_params,
                         model_grads_to_master_grads, unflatten_master_params,
                         zero_grad)
+from .image_datasets import default_iterations_dict
 from .nn import update_ema
 from .resample import LossAwareSampler, UniformSampler
 from .rng_util import RNG, rng_decorator
@@ -52,6 +53,7 @@ class TrainLoop:
         weight_decay=0.0,
         lr_anneal_steps=0,
         sample_interval=None,
+        iterations=None,
         do_inefficient_marg=True,
         n_valid_batches=1,
         n_valid_repeats=1,
@@ -103,6 +105,9 @@ class TrainLoop:
         self.observed_frames = observed_frames
         self.use_gradient_method = use_gradient_method
 
+        self.iterations = default_iterations_dict[
+            args.dataset] if iterations is None else iterations
+
         self._load_and_sync_parameters()
         if self.use_fp16:
             self._setup_fp16()
@@ -111,7 +116,7 @@ class TrainLoop:
                          lr=self.lr,
                          weight_decay=self.weight_decay)
         self.lr_scheduler = th.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.opt, 500000)
+            self.opt, self.iterations)
         if self.resume_checkpoint:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint

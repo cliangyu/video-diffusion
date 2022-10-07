@@ -260,7 +260,6 @@ class GaussianDiffusion:
             model_kwargs = {}
 
         new_model_kwargs = {k: v for k, v in model_kwargs.items()}
-        use_gradient_method = True  # debug
 
         if use_gradient_method:
             x.requires_grad_(True)
@@ -349,8 +348,14 @@ class GaussianDiffusion:
                     pred_xstart.shape == x.shape)
 
             if use_gradient_method:
+                noise = th.randn_like(x)
+                nonzero_mask = (
+                    (t != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
+                )  # no noise when t == 0
+                sample_t_minus_1 = model_mean + nonzero_mask * th.exp(
+                    0.5 * model_log_variance) * noise
                 pixelwise_diff_to_obs = (
-                    model_mean - model_kwargs['x_t_minus_1']) * obs_mask
+                    sample_t_minus_1 - model_kwargs['x_t_minus_1']) * obs_mask
                 obs_mismatch = (pixelwise_diff_to_obs**2).sum()
                 obs_mismatch.backward()
                 g = x.grad
