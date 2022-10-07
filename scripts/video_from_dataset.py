@@ -9,6 +9,9 @@ from improved_diffusion.image_datasets import (get_test_dataset,
                                                get_train_dataset,
                                                get_variable_length_dataset)
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('dataset', type=str)

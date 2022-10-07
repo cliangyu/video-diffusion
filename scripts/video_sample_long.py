@@ -17,6 +17,8 @@ from improved_diffusion.image_datasets import (get_test_dataset,
                                                get_variable_length_dataset)
 from improved_diffusion.script_util import str2bool
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 # A dictionary of default model configs for the parameters newly introduced.
 # It enables backward compatibility
 default_model_configs = {

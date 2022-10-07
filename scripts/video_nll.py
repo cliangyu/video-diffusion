@@ -23,6 +23,8 @@ from improved_diffusion.script_util import (args_to_dict,
                                             str2bool,
                                             video_model_and_diffusion_defaults)
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 mask_distributions = ['differently-spaced-groups']
 
 
@@ -311,7 +313,7 @@ if __name__ == '__main__':
         print(f'Only generating predictions for the batch #{task_id}.')
     elif args.indices is None:
         args.indices = list(range(len(dataset)))
-        print(f'Generating predictions for the whole dataset.')
+        print('Generating predictions for the whole dataset.')
     else:
         raise NotImplementedError
     # Take a subset of the dataset according to the indices
@@ -324,7 +326,7 @@ if __name__ == '__main__':
                             shuffle=False,
                             drop_last=False)
     if args.indices_path is None:
-        args.indices_path = args.eval_dir / f'frame_indices.pt'
+        args.indices_path = args.eval_dir / 'frame_indices.pt'
 
     # Prepare the diffusion sampling arguments (DDIM/respacing)
     postfix = ''

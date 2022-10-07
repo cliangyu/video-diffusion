@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import tensorflow.compat.v1 as tf
+import torch
 import torch as th
 
 import improved_diffusion.frechet_video_distance as fvd
@@ -13,6 +14,8 @@ from improved_diffusion import test_util
 # Metrics
 from improved_diffusion.image_datasets import get_test_dataset
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 tf.disable_eager_execution()  # Required for our FVD computation code
 
 

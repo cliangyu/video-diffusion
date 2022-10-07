@@ -20,6 +20,7 @@ from improved_diffusion.script_util import (add_dict_to_argparser,
 from improved_diffusion.train_util import TrainLoop
 
 torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 os.environ['MY_WANDB_DIR'] = 'none'
 if '--unobserve' in sys.argv:

@@ -27,6 +27,8 @@ default_model_configs = {
     'enforce_position_invariance': False,
     'cond_emb_type': 'channel',
 }
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 
 def get_masks(x0, num_obs):

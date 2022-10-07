@@ -4,7 +4,11 @@ from argparse import ArgumentParser
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from PIL import Image
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 
 
 def load_frames_from_gif(path, indices):
@@ -75,4 +79,4 @@ for ax_row, path in zip(axes, video_paths):
 for ax, t in zip(axes[-1], indices_to_plot):
     ax.set_xlabel(t + 1, fontsize=8)
 
-fig.savefig(os.path.join(args.gif_dir, f'array.pdf'), bbox_inches='tight')
+fig.savefig(os.path.join(args.gif_dir, 'array.pdf'), bbox_inches='tight')

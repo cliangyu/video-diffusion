@@ -18,6 +18,8 @@ from improved_diffusion.script_util import (args_to_dict,
                                             str2bool,
                                             video_model_and_diffusion_defaults)
 
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 # A dictionary of default model configs for the parameters newly introduced.
 # It enables backward compatibility
 default_model_configs = {

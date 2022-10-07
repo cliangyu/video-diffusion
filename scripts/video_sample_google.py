@@ -22,7 +22,8 @@ from improved_diffusion.script_util import (args_to_dict,
                                             video_model_and_diffusion_defaults)
 
 sys.path.insert(1, str(Path(__file__).parent.resolve()))
-
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 # A dictionary of default model configs for the parameters newly introduced.
 # It enables backward compatibility
 default_model_configs = {
@@ -331,7 +332,7 @@ if __name__ == '__main__':
         args.indices = list(range(args.subset_size))
     elif args.indices is None:
         args.indices = list(range(len(dataset)))
-        print(f'Generating predictions for the whole dataset.')
+        print('Generating predictions for the whole dataset.')
     # Take a subset of the dataset according to the indices
     dataset = torch.utils.data.Subset(dataset, args.indices)
     print(
