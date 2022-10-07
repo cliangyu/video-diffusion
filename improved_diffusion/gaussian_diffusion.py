@@ -260,7 +260,6 @@ class GaussianDiffusion:
             model_kwargs = {}
 
         new_model_kwargs = {k: v for k, v in model_kwargs.items()}
-        use_gradient_method = True  # debug
 
         if use_gradient_method:
             x.requires_grad_(True)
