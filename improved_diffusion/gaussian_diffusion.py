@@ -883,16 +883,16 @@ class GaussianDiffusion:
                 noise,
             }[self.model_mean_type]
             assert model_output.shape == target.shape == x_start.shape
-            terms['obs-mse'] = mean_flat((target - model_output)**2,
-                                         mask=obs_mask)
-            grad = th.stack([
-                th.autograd.grad(
-                    terms['obs-mse'][idx], x_t_in, retain_graph=True)[0][idx] *
-                obs_mask for idx in range(x_t_in.shape[0])
-            ])
-            self.omega = 50
-            model_output = model_output - self.omega / 2 * _extract_into_tensor(
-                self.alphas, t, grad.shape) * grad
+            # terms['obs-mse'] = mean_flat((target - model_output)**2,
+            #                              mask=obs_mask)
+            # grad = th.stack([
+            #     th.autograd.grad(
+            #         terms['obs-mse'][idx], x_t_in, retain_graph=True)[0][idx] *
+            #     obs_mask for idx in range(x_t_in.shape[0])
+            # ])
+            # self.omega = 50
+            # model_output = model_output - self.omega / 2 * _extract_into_tensor(
+            #   self.alphas, t, grad.shape) * grad
             terms['mse'] = mean_flat((target - model_output)**2,
                                      mask=latent_mask)
             terms['eval-mse'] = mean_flat((target - model_output)**2,
