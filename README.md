@@ -15,6 +15,7 @@ python datasets/convert_bair.py --data_dir /dataset_path
 ### MineRL Dataset
 pip install tensorflow
 pip install tensorflow_datasets
+pip install minerl-navigate
 conda update ffmpeg
 python datasets/minerl.py
 ### Maze Dataset

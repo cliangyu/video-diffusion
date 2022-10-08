@@ -1,12 +1,10 @@
 import os
 from pathlib import Path
 
+import minerl_navigate
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
-
-# train = train.flat_map(lambda x: tf.data.Dataset.from_tensor_slices(
-#     tf.reshape(x['video'], (500, 64, 64, 3))))
 
 if __name__ == '__main__':
     data_dir = Path(os.path.dirname(os.path.abspath(__file__)))
