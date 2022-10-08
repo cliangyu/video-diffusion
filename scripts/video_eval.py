@@ -16,6 +16,7 @@ from skimage.metrics import structural_similarity as ssim_metric
 from tqdm.auto import tqdm
 
 import improved_diffusion.frechet_video_distance as fvd
+import wandb
 from improved_diffusion import test_util
 from improved_diffusion.image_datasets import get_test_dataset
 
@@ -331,6 +332,14 @@ if __name__ == '__main__':
     else:
         assert args.T <= data_fetch.T
 
+    wandb_run = wandb.init(
+        project='FlexDiff',
+        entity='liangyu',
+        group='test',
+        config=vars(args),
+        # settings=wandb.Settings(start_method='fork'),
+    )
+
     # Check if metrics have already been computed
     name = f'metrics_{len(data_fetch)}-{args.num_samples}-{args.T}'
     pickle_path = Path(args.eval_dir) / f'{name}.pkl'
@@ -370,6 +379,11 @@ if __name__ == '__main__':
                 num_samples=args.num_samples,
                 batch_size=args.batch_size,
             ))
+
+    # log to wandb
+    for key in new_metrics:
+        print('{}\t{:.4f}'.format(key, new_metrics[key].mean()))
+        wandb.log({f'{key}'.format(key): new_metrics[key].mean()})
 
     # Save all metrics as a pickle file (update it if it already exists)
     with test_util.Protect(pickle_path):  # avoids race conditions

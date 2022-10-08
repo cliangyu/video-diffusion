@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-import minerl_navigate
 import numpy as np
 import tensorflow as tf
 import tensorflow_datasets as tfds
