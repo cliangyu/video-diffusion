@@ -661,12 +661,12 @@ class GQNMazesDataset(BaseDataset):
 
 class MineRLDataset(BaseDataset):
     def __init__(self, path, shard, num_shards, T):
-        assert (
-            shard == 0
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
-        assert (
-            num_shards == 1
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     shard == 0
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     num_shards == 1
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 
     def getitem_path(self, idx):
