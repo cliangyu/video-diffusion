@@ -232,15 +232,33 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
     image_size = (default_image_size_dict[dataset_name]
                   if image_size is None else image_size)
 
+    if dist.is_initialized():
+        shard = torch.distributed.get_rank(
+        ) if NO_MPI else MPI.COMM_WORLD.Get_rank()
+        num_shards = torch.cuda.device_count(
+        ) if NO_MPI else MPI.COMM_WORLD.Get_size()
+    else:
+        shard = 0
+        num_shards = 1
+
     if dataset_name == 'minerl':
         data_path = os.path.join(data_path, 'test')
-        dataset = MineRLDataset(data_path, shard=0, num_shards=1, T=T)
+        dataset = MineRLDataset(data_path,
+                                shard=shard,
+                                num_shards=num_shards,
+                                T=T)
     elif dataset_name == 'mazes':
         data_path = os.path.join(data_path, 'test')
-        dataset = MazesDataset(data_path, shard=0, num_shards=1, T=T)
+        dataset = MazesDataset(data_path,
+                               shard=shard,
+                               num_shards=num_shards,
+                               T=T)
     elif dataset_name == 'mazes_cwvae':
         data_path = os.path.join(data_path, 'test')
-        dataset = GQNMazesDataset(data_path, shard=0, num_shards=1, T=T)
+        dataset = GQNMazesDataset(data_path,
+                                  shard=shard,
+                                  num_shards=num_shards,
+                                  T=T)
     elif dataset_name in [
             'carla_no_traffic',
             'carla_with_traffic',
@@ -477,12 +495,12 @@ class MazesDataset(BaseDataset):
     """from https://github.com/iShohei220/torch-gqn/blob/master/gqn_dataset.py
     ."""
     def __init__(self, path, shard, num_shards, T):
-        assert (
-            shard == 0
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
-        assert (
-            num_shards == 1
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     shard == 0
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     num_shards == 1
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 
     def getitem_path(self, idx):
@@ -636,12 +654,12 @@ class GQNMazesDataset(BaseDataset):
     """based on https://github.com/iShohei220/torch-
     gqn/blob/master/gqn_dataset.py ."""
     def __init__(self, path, shard, num_shards, T):
-        assert (
-            shard == 0
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
-        assert (
-            num_shards == 1
-        ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     shard == 0
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
+        # assert (
+        #     num_shards == 1
+        # ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
 
     def getitem_path(self, idx):
