@@ -552,7 +552,7 @@ class TrainLoop:
             logger.logkv('lg_loss_scale', self.lg_loss_scale)
 
     def save(self):
-        if dist.is_initialized() and dist.get_rank() == 0:
+        if dist.get_rank() == 0:
             postfix = 'latest' if self._args.save_latest_only else f'{(self.step):06d}'
             to_save = {
                 bf.join(get_blob_logdir(self._args), f'opt_{postfix}.pt'):
@@ -570,7 +570,7 @@ class TrainLoop:
                 to_save[filepath] = {
                     'state_dict': self._master_params_to_state_dict(params),
                     'config': self._args.__dict__,
-                    'step': self.step,
+                    'step': self.step
                 }
 
             for path in to_save:
@@ -585,40 +585,8 @@ class TrainLoop:
                 backup_path = path + '-backup'
                 if os.path.exists(backup_path):
                     os.remove(backup_path)
-            dist.barrier()
-        else:
-            postfix = 'latest' if self._args.save_latest_only else f'{(self.step):06d}'
-            to_save = {
-                bf.join(get_blob_logdir(self._args), f'opt_{postfix}.pt'):
-                self.opt.state_dict()
-            }
 
-            # vmnote: make dir if it doesn't exist
-            Path(get_blob_logdir(self._args)).mkdir(parents=True,
-                                                    exist_ok=True)
-
-            for rate, params in zip([0, *self.ema_rate],
-                                    [self.master_params, *self.ema_params]):
-                filename = f'ema_{rate}_{postfix}.pt' if rate else f'model_{postfix}.pt'
-                filepath = bf.join(get_blob_logdir(self._args), filename)
-                to_save[filepath] = {
-                    'state_dict': self._master_params_to_state_dict(params),
-                    'config': self._args.__dict__,
-                    'step': self.step,
-                }
-
-            for path in to_save:
-                # backup previous
-                if os.path.exists(path) and self._args.save_latest_only:
-                    shutil.copy(path, path + '-backup')
-            for path, params in to_save.items():
-                with bf.BlobFile(path, 'wb') as f:
-                    th.save(params, f)
-            for path in to_save:
-                # delete backup
-                backup_path = path + '-backup'
-                if os.path.exists(backup_path):
-                    os.remove(backup_path)
+        dist.barrier()
 
     def _master_params_to_state_dict(self, master_params):
         if self.use_fp16:
