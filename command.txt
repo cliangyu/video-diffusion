@@ -1,0 +1,431 @@
+    1  cd Doc*
+    2  ls
+    3  chmod a+x Immersed*
+    4  apt get install v4l2loopback
+    5  apt-get install v4l2loopback
+    6  sudoo apt-get install v4l2loopback
+    7  sudo apt-get install v4l2loopback
+    8  apt-get upgrade
+    9  sudo apt-get upgrade
+   10  sudo apt-get -y install v4l2loopback-dkms
+   11  v4l2loopback
+   12  sudo apt-get -y install v4l2loopback-utils
+   13  sudo apt-get install v4l2loopback-utils
+   14  v4l2loopback
+   15  sudo modprobe v4l2loopback
+   16  sudo apt-get install tmate
+   17  tmate
+   18  sudo apt autoremove
+   19  sudo apt-get install software-center
+   20  sudo apt-get update
+   21  sudo apt-get install software-center
+   22  sudo apt upgrate
+   23  sudo apt upgrade
+   24  sudo apt update
+   25  sudo apt-get install software-center
+   26  sudo apt-get install ubuntu-software-center
+   27  apt-cache search software-center
+   28  sudo apt-get install app-install-data
+   29  sudo apt-get install phoronix-test-suite
+   30  sudo apt-get install hardinfo
+   31  hardinfo
+   32  sudo apt-get install chrome
+   33  sudo apt-get install chrome-stable
+   34  nvidia-smi
+   35  cd Dow*
+   36  sudo ./v.bundle
+   37  passwd
+   38  sudo visudo
+   39  sudo
+   40  ls
+   41  sudo apt install --reinstall software-center
+   42  apt list --installed
+   43  killall snap-store
+   44  nvidia-smi
+   45  fsapfsmount
+   46  sudo apt install libfsapfs-utils
+   47  mount
+   48  ls
+   49  fsapfsmount -p ustcer007 /dev/sda1
+   50  fsapfsmount -f 1 -p ustcer007 /dev/sda1
+   51  ls
+   52  mkdir Mount
+   53  fsapfsmount -f 1 -p ustcer007 /dev/sda2 mount
+   54  mount
+   55  ls /dev
+   56  fsapfsmount -p ustcer007 /dev/sda2 mount
+   57  ls /dev/sda2
+   58  ls -l /dev/sda2
+   59  sudo fsapfsmount -p ustcer007 /dev/sda2 mount
+   60  sudo fsapfsmount -p ustcer007 /dev/sda2 ./mount
+   61  sudo fsapfsmount -f 1 -p ustcer007 /dev/sda2 ./mount
+   62  sudo fsapfsmount -f 1 -p c /dev/sda2 ./mount
+   63  sudo fsapfsmount -f 1 -p Ustcer007 /dev/sda2 ./mount
+   64  mount /dev/sda2 ./mount
+   65  mount /dev/sda2 ./Mount
+   66  sudo mount /dev/sda2 ./Mount
+   67  sudo fsapfsmount -f all -p Ustcer007 /dev/sda2 ./mount
+   68  sudo fsapfsmount -p Ustcer007 /dev/sda2 ./mount
+   69  sudo fsapfsmount -p Ustcer007 ./mount
+   70  sudo fsapfsmount -f 0 -p Ustcer007 /dev/sda2 ./mount
+   71  sudo fsapfsmount -f 3 -p Ustcer007 /dev/sda2 ./mount
+   72  sudo fsapfsmount -f 2 -p Ustcer007 /dev/sda2 ./mount
+   73  sudo fsapfsmount -f 2 -p c /dev/sda2 ./mount
+   74  df
+   75  cd v*
+   76  pip install minerl-navigate
+   77  python datasets/minerl.py
+   78  git pull
+   79  python datasets/minerl.py
+   80  wget --content-disposition https://ngc.nvidia.com/downloads/ngccli_linux.zip && unzip ngccli_linux.zip && chmod u+x ngc-cli/ngc
+   81  ls
+   82  rm ngc*
+   83  ls
+   84  rm -rf ngc*
+   85  ls
+   86  cd ..
+   87  [200~wget --content-disposition https://ngc.nvidia.com/downloads/ngccli_linux.zip && unzip ngccli_linux.zip && chmod u+x ngc-cli/ngc
+   88  ~wget --content-disposition https://ngc.nvidia.com/downloads/ngccli_linux.zip && unzip ngccli_linux.zip && chmod u+x ngc-cli/ngc
+   89  wget --content-disposition https://ngc.nvidia.com/downloads/ngccli_linux.zip && unzip ngccli_linux.zip && chmod u+x ngc-cli/ngc
+   90  ls
+   91  echo "export PATH=\"\$PATH:$(pwd)/ngc-cli\"" >> ~/.bash_profile && source ~/.bash_profile
+   92  ngc config set
+   93  ngc workspace list
+   94  mkdir Mount
+   95  ls Mount
+   96  ngc workspace mount video-diffusion-full --mode RW ./mount
+   97  sshfs
+   98  sudo apt install sshfs
+   99  ngc workspace mount video-diffusion-full --mode RW ./mount
+  100  ngc workspace unmount ./mount
+  101  ngc workspace unmount ./Mount
+  102  ngc workspace mount video-diffusion-full --mode RW ./Mount
+  103  cd Mount
+  104  ls
+  105  cd vi*
+  106  ls
+  107  git pull
+  108  git config pull.ff only
+  109  git pull
+  110  git config pull.rebase true
+  111  git pull
+  112  cd ..
+  113  rm -rf video-diffusion
+  114  git clone https://github.com/c-liangyu/video-diffusion.git
+  115  cd ..
+  116  cd json
+  117  ls
+  118  cd json
+  119  ls
+  120  ngc batch -f video-v100.json
+  121  ngc batch run -f video-v100.json
+  122  ngc batch run -f video-a100.json
+  123  df
+  124  cd ../Music
+  125  ls
+  126  ls *.vmdk
+  127  ls *flat.vmdk
+  128  ls -l *flat.vmdk 
+  129  sudo rm *flat.vmdk
+  130  ls
+  131  ls -l 
+  132  cd ..
+  133  df
+  134  git clone https://github.com/c-liangyu/video-diffusion.git
+  135  cd video-diffusion
+  136  ls
+  137  pip install tensorflow
+  138  pip install tensorflow_datasets
+  139  conda 
+  140  cd datasets
+  141  ls
+  142  cd ..
+  143  python datasets/minerl.py
+  144  pip install ffmpeg
+  145  python datasets/minerl.py
+  146  cd ..
+  147  git pull
+  148  sudo apt-get install git
+  149  git
+  150  ls
+  151  cd v*
+  152  git pull
+  153  python datasets/minerl.py
+  154  pip install tensorflow
+  155  python datasets/minerl.py
+  156  pip install tensorflow_datasets
+  157  python datasets/minerl.py
+  158  ls datasets
+  159  rm -rf video-diffusion/minerl_navigate-torch
+  160  python datasets/minerl.py
+  161  python datasets/mazes.py
+  162  ffmpeg
+  163  sudo apt-get install ffmpeg
+  164  python datasets/mazes.py
+  165  df
+  166  ls -l
+  167  du -hs .
+  168  ls
+  169  cd v*
+  170  du -hs .
+  171  ls
+  172  cd datasets
+  173  du -hs .
+  174  ls
+  175  cd gqn*
+  176  cd gqn*-torch
+  177  ls
+  178  du -hs .
+  179  cd ..
+  180  ls
+  181  cd carla
+  182  ls
+  183  cd gqn_mazes
+  184  ls
+  185  cd ..
+  186  cd gqn_mazes
+  187  ls
+  188  du -hs .
+  189  rm -rf *
+  190  ls
+  191  cd ..
+  192  ls
+  193  cd gqn*
+  194  rm -rf gqn_mazes
+  195  cd gqn*
+  196  cd ..
+  197  ls
+  198  ls 
+  199  cd ..
+  200  cd datasets
+  201  ls
+  202  rm -rf minerl_navigate
+  203  rm -rf minerl_navigate-torch
+  204  ls
+  205  cd ..
+  206  python datasets/minerl.py
+  207  ls
+  208  cd datasets
+  209  ls
+  210  cd minerl_navigate-torch
+  211  ls
+  212  ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  213  cd ../..
+  214  cd ..
+  215  ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  216  ls
+  217  cd ngc-cli
+  218  ls
+  219  cd ..
+  220  vim .bashrc
+  221  vim .bash_profile
+  222  bash .bash_profile
+  223  ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  224  vim .bash_profile
+  225  ngc
+  226  ls
+  227  ngc-cli/ngc
+  228  ngc-cli/ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  229  ngc
+  230  vim .bash_profile
+  231  export PATH="$PATH:/home/tongc/ngc-cli"
+  232  ngc
+  233  ls
+  234  cd v*/datasets
+  235  ls
+  236  ngc dataset upload --source ./minerl_navigate-torch --desc "minerl" minerl
+  237  ls
+  238  cd v*
+  239  ls
+  240  cd data*
+  241  ls
+  242  cd gqn*
+  243  ngc dataset upload --source . --desc "gqn_mazes" gqn_mazes
+  244  cd ..
+  245  ngc dataset upload --source ./gqn_mazes --desc "gqn_mazes" gqn_mazes
+  246  ./ngc_cli/ngc dataset upload --source ./gqn_mazes --desc "gqn_mazes" gqn_mazes
+  247  ./ngc-cli/ngc dataset upload --source ./gqn_mazes --desc "gqn_mazes" gqn_mazes
+  248  ls
+  249  cd ..
+  250  ./ngc-cli/ngc dataset upload --source ./datasets/gqn_mazes --desc "gqn_mazes" gqn_mazes
+  251  ./ngc_cli/ngc dataset upload --source ./datasets/gqn_mazes --desc "gqn_mazes" gqn_mazes
+  252  ls
+  253  cd ..
+  254  ./bash_profile
+  255  ./.bash_profile
+  256  sh .bash_profile
+  257  ngc
+  258  vim .bash_profile
+  259  export PATH="$PATH:/home/tongc/ngc-cli"
+  260  cd v*
+  261  ngc dataset upload --source ./datasets/gqn_mazes --desc "gqn_mazes" gqn_mazes
+  262  cd datasets
+  263  cd gqn*
+  264  ngc dataset upload --source . --desc "gqn_mazes" gqn_mazes
+  265  cd ../..
+  266  cd ..
+  267  cd json
+  268  vim video-v100.json
+  269  ngc dataset
+  270  ngc dataset list
+  271  cd ..
+  272  cd Dow*
+  273  ls
+  274  ngc batch run -f ca0.json
+  275  cd ..
+  276  vim Dockerfile
+  277  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  278  sudo docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  279  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  280  sudo groupadd docker
+  281  sudo usermod -aG docker ${USER}
+  282  su -s ${USER}
+  283  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  284  chmod 777 /var/run/docker/sock
+  285  sudo chmod 777 /var/run/docker/sock
+  286  sudo chmod 777 /var/run/docker.sock
+  287  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  288  mkdir docker
+  289  ls
+  290  mv Dockerfile docker
+  291  cd docker
+  292  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  293  ls
+  294  vim Dockerfile
+  295  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  296  sudo apt-get install htop
+  297  docker build -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  298  docker build --no-cache -t nvcr.io/nvidian/nvr-av/video-diffusion:0.2 .
+  299  docker push nvcr.io/nvidian/nvr-av/video-difufusion:0.2
+  300  docker push nvcr.io/nvidian/nvr-av/video-diffusion:0.2
+  301  docker login
+  302  docker login nvcr.io
+  303  sudo docker login nvcr.io
+  304  docker push nvcr.io/nvidian/nvr-av/video-difufusion:0.2
+  305  docker push nvcr.io/nvidian/nvr-av/video-diffusion:0.2
+  306  sudo docker login nvcr.io
+  307  docker push nvcr.io/nvidian/nvr-av/video-diffusion:0.2
+  308  sudo docker login nvcr.io
+  309  ngc config set
+  310  docker login nvcr.io
+  311  docker push nvcr.io/nvidian/nvr-av/video-diffusion:0.2
+  312  cd ..
+  313  ls
+  314  ngc
+  315  ls
+  316  vim .bash_profile
+  317  vim .bash_rc
+  318  vim .bashrc
+  319  export PATH="$PATH:/home/tongc/ngc-cli"
+  320  ngc workspace mount video-diffusion-full ./Mount
+  321  ngc workspace mount video-diffusion-full ./Mount --mode RW
+  322  ls
+  323  cd Mount
+  324  ls
+  325  cd v*
+  326  ls
+  327  git pull
+  328  cd ..
+  329  ls
+  330  cd json
+  331  ls
+  332  ngc batch run -f video-v100.json
+  333  ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  334  cd ../.ngc
+  335  cd config
+  336  ls
+  337  vim config
+  338  cd ..
+  339  cd json
+  340  ngc config set --ace nv-us-west-2 --org nvidian --team nvr-av
+  341  ngc batch run -f video-v100.json
+  342  ngc config set
+  343  ngc batch run -f video-v100.json
+  344  cd ..
+  345  ngc umount Mount
+  346  ngc workspace umount Mount
+  347  ngc workspace unmount Mount
+  348  ngc workspace mount video-diffusion-full ./Mount --mode RW
+  349  cd Mount
+  350  ls
+  351  cd v*
+  352  git pull
+  353  git stash
+  354  git pull --ff-only
+  355  git pull --rebase
+  356  cd ..
+  357  rm -rf video-diffusion
+  358  git clone https://github.com/c-liangyu/video-diffusion.git
+  359  ld
+  360  ls
+  361  cd v*
+  362  ls
+  363  cd ../..
+  364  ls
+  365  cd json
+  366  ngc batch run -f video-v100.json
+  367  vim video-v100.json
+  368  ngc batch run -f video-v100.json
+  369  sudo dockerd
+  370  dockerd
+  371  sudo apt install docker.io
+  372  sudo dockerd
+  373  ls /var/run/docker.pid
+  374  rm /var/run/docker.pid
+  375  sudo rm /var/run/docker.pid
+  376  sudo dockerd
+  377  ps axf | grep docker | grep -v grep | awk '{print "kill -9 " $1}' | sudo sh 
+  378  sudo dockerd
+  379  sudo rm /var/run/docker.pid
+  380  ps axf | grep docker | grep -v grep | awk '{print "kill -9 " $1}' | sudo sh 
+  381  sudo dockerd
+  382  sudo rm /var/run/docker.pid
+  383  sudo dockerd
+  384  systemctl status docker
+  385  systemctl stop docker
+  386  sudo dockerd
+  387  quit
+  388  exit
+  389  ls
+  390  ls
+  391  nvidia-smi
+  392  df -hl
+  393  ls
+  394  ls
+  395  ls
+  396  cd ..
+  397  ls
+  398  cd ..
+  399  ls
+  400  cd video-diffusion/
+  401  ls
+  402  cd ..
+  403  cd video-diffusion/
+  404  git status
+  405  git fetch
+  406  git status
+  407  git tree
+  408  cd ..
+  409  ls
+  410  ngc workspace mount video-diffusion-full ./Mount --mode RW
+  411  cd Mount
+  412  ls
+  413  cd video-diffusion/
+  414  ls
+  415  cd ..
+  416  cd debt
+  417  ls
+  418  cd data
+  419  ls
+  420  cd ../.
+  421  cd ..
+  422  ls
+  423  history
+  424  setclip
+  425  history
+  426  cd video-diffusion/
+  427  ls
+  428  git fetch
+  429  git status
+  430  git pull
+  431  history > command.txt
