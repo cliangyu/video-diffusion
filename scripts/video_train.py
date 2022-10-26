@@ -21,6 +21,7 @@ from improved_diffusion.train_util import TrainLoop
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
 
 os.environ['MY_WANDB_DIR'] = 'none'
 if '--unobserve' in sys.argv:
@@ -62,7 +63,8 @@ def main():
     default_T = video_length
     default_image_size = default_image_size_dict[args.dataset]
     args.T = default_T if args.T == -1 else args.T
-    args.image_size = default_image_size
+    # args.image_size = default_image_size
+    args.image_size = default_image_size if args.image_size == -1 else args.image_size
     if args.rp_alpha is None:
         assert args.rp_beta is None
         args.rp_alpha = args.rp_beta = args.rp_gamma = args.T
@@ -94,6 +96,7 @@ def main():
         dataset_name=args.dataset,
         batch_size=args.batch_size,
         T=args.T,
+        image_size=args.image_size,
         num_workers=args.num_workers,
         data_path=args.data_path,
     )
@@ -175,6 +178,7 @@ def create_argparser():
         observed_frames='x_t_minus_1',
         data_path=None,  # assign data path,
         use_gradient_method=True,
+        image_size=-1,
     )
     defaults.update(video_model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()

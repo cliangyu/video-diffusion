@@ -160,20 +160,20 @@ def load_video_data(
         num_shards = 1
 
     def get_loader(dataset):
-        return DataLoader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=(not deterministic),
-            num_workers=num_workers,
-            drop_last=True,
-            pin_memory=True,
-        )
+        return DataLoader(dataset,
+                          batch_size=batch_size,
+                          shuffle=(not deterministic),
+                          num_workers=num_workers,
+                          drop_last=True,
+                          pin_memory=True,
+                          persistent_workers=True)
 
     if dataset_name == 'minerl':
         data_path = os.path.join(data_path, 'train')
         dataset = MineRLDataset(data_path,
                                 shard=shard,
                                 num_shards=num_shards,
+                                image_size=image_size,
                                 T=T)
     elif dataset_name == 'mazes':
         raise Exception('Deprecated dataset.')
@@ -187,18 +187,24 @@ def load_video_data(
         dataset = GQNMazesDataset(data_path,
                                   shard=shard,
                                   num_shards=num_shards,
+                                  image_size=image_size,
                                   T=T)
     elif dataset_name == 'ucf101':
         # dataset = UCF101Dataset(train=True, path=data_path, shard=shard, num_shards=num_shards, T=T)
         config_path = os.path.join(data_path, 'train.json')
         h5path = os.path.join(data_path, 'train.h5')
-        dataset = UCF101Dataset(config_path=config_path, h5path=h5path)
+        dataset = UCF101Dataset(
+            config_path=config_path,
+            h5path=h5path,
+            image_size=image_size,
+        )
     elif dataset_name == 'bair_pushing':
         data_path = os.path.join(data_path, 'train')
         dataset = BairPushingDataset(train=True,
                                      path=data_path,
                                      shard=shard,
                                      num_shards=num_shards,
+                                     image_size=image_size,
                                      T=T)
     elif dataset_name in [
             'carla_no_traffic',
@@ -209,12 +215,16 @@ def load_video_data(
                                path=data_path,
                                shard=shard,
                                num_shards=num_shards,
+                               image_size=image_size,
                                T=T)
     elif dataset_name == 'bouncy_balls':
         data_path = os.path.join(data_path, 'train.pt')
-        dataset = TensorVideoDataset(data_path,
-                                     shard=shard,
-                                     num_shards=num_shards)
+        dataset = TensorVideoDataset(
+            data_path,
+            shard=shard,
+            num_shards=num_shards,
+            image_size=image_size,
+        )
     else:
         raise Exception('no dataset', dataset_name)
     loader = get_loader(dataset)
@@ -246,18 +256,21 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
         dataset = MineRLDataset(data_path,
                                 shard=shard,
                                 num_shards=num_shards,
+                                image_size=image_size,
                                 T=T)
     elif dataset_name == 'mazes':
         data_path = os.path.join(data_path, 'test')
         dataset = MazesDataset(data_path,
                                shard=shard,
                                num_shards=num_shards,
+                               image_size=image_size,
                                T=T)
     elif dataset_name == 'mazes_cwvae':
         data_path = os.path.join(data_path, 'test')
         dataset = GQNMazesDataset(data_path,
                                   shard=shard,
                                   num_shards=num_shards,
+                                  image_size=image_size,
                                   T=T)
     elif dataset_name in [
             'carla_no_traffic',
@@ -268,6 +281,7 @@ def get_test_dataset(dataset_name, T=None, image_size=None):
                                path=data_path,
                                shard=0,
                                num_shards=1,
+                               image_size=image_size,
                                T=T)
     else:
         raise Exception('no dataset', dataset_name)
@@ -596,9 +610,10 @@ class BairPushingDataset(MazesDataset):
 
 
 class CarlaDataset(MazesDataset):
-    def __init__(self, train, shard, num_shards, *args, **kwargs):
+    def __init__(self, train, shard, num_shards, image_size, *args, **kwargs):
         super().__init__(shard=0, num_shards=1, *args,
                          **kwargs)  # dumy values of
+        self.image_size = image_size
         self.split_path = self.path / f"video_{'train' if train else 'test'}.csv"
         # self.cache_file(self.split_path)
         self.fnames = [
@@ -628,7 +643,9 @@ class CarlaDataset(MazesDataset):
         return self.path / self.fnames[idx]
 
     def postprocess_video(self, video):
-        return -1 + 2 * (video.permute(0, 3, 1, 2).float() / 255)
+        video = -1 + 2 * (video.permute(0, 3, 1, 2).float() / 255)
+        video = Resize(self.image_size)(video)
+        return video
 
     def __len__(self):
         return len(self.fnames)
@@ -678,7 +695,7 @@ class GQNMazesDataset(BaseDataset):
 
 
 class MineRLDataset(BaseDataset):
-    def __init__(self, path, shard, num_shards, T):
+    def __init__(self, path, shard, num_shards, image_size, T):
         # assert (
         #     shard == 0
         # ), 'Distributed training is not supported by the MineRL dataset yet.'
@@ -686,6 +703,7 @@ class MineRLDataset(BaseDataset):
         #     num_shards == 1
         # ), 'Distributed training is not supported by the MineRL dataset yet.'
         super().__init__(path=path, T=T)
+        self.image_size = image_size
 
     def getitem_path(self, idx):
         return self.path / f'{idx}.npy'
@@ -699,4 +717,5 @@ class MineRLDataset(BaseDataset):
 
         video = torch.stack([byte_to_tensor(frame) for frame in video])
         video = 2 * video - 1
+        video = Resize(self.image_size)(video)
         return video

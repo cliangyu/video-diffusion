@@ -622,7 +622,7 @@ class UNetModel(nn.Module):
         ds = 1
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
-                if ds in attention_resolutions and self.n_blocks_before_attn is None:
+                if ds in attention_resolutions and self.n_blocks_before_attn is None:  # first res block
                     self.n_blocks_before_attn = len(self.input_blocks)
                     first_attn_ds = ds
                     first_attn_ch = ch
